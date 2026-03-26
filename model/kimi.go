@@ -7,7 +7,6 @@ import (
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
-	"github.com/firebase/genkit/go/plugins/compat_oai"
 )
 
 func InitKimi(ctx context.Context) (*genkit.Genkit, error) {
@@ -22,30 +21,22 @@ func InitKimi(ctx context.Context) (*genkit.Genkit, error) {
 		return nil, &CredsNotSetError{Detail: apiKeyEnv}
 	}
 
-	// Use the OpenAI-compatible plugin since Kimi API is OpenAI-compatible
-	provider := &compat_oai.OpenAICompatible{
-		Provider: "kimi",
-		APIKey:   apiKey,
-		BaseURL:  baseURL,
-	}
-
-	g := genkit.Init(ctx,
-		genkit.WithPlugins(provider),
-		genkit.WithDefaultModel("kimi/"+modelName),
-	)
-
-	// Define the model with its capabilities
-	provider.DefineModel("kimi", modelName, ai.ModelOptions{
-		Label:    "Kimi " + modelName,
-		Versions: []string{modelName},
-		Supports: &ai.ModelSupports{
-			Multiturn:  true,
-			Tools:      true,
-			Media:      true,
-			SystemRole: true,
-			ToolChoice: true,
+	provider := newReasoningCompatibleProvider("kimi", apiKey, baseURL, map[string]ai.ModelOptions{
+		modelName: {
+			Label:    "Kimi " + modelName,
+			Versions: []string{modelName},
+			Supports: &ai.ModelSupports{
+				Multiturn:  true,
+				Tools:      true,
+				Media:      true,
+				SystemRole: true,
+				ToolChoice: true,
+			},
 		},
 	})
 
-	return g, nil
+	return genkit.Init(ctx,
+		genkit.WithPlugins(provider),
+		genkit.WithDefaultModel("kimi/"+modelName),
+	), nil
 }
