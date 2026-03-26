@@ -11,6 +11,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 )
 
+// DefineBash defines the bash tool on the given genkit instance.
 func DefineBash(g *genkit.Genkit) *ai.ToolDef[bashInput, bashOutput] {
 	return genkit.DefineTool(
 		g, "bash", "Execute bash command",

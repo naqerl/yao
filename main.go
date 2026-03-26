@@ -1,65 +1,90 @@
 package main
 
 import (
-        "bufio"
-        "context"
-        "fmt"
-        "log"
-        "log/slog"
-        "os"
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
-        "github.com/firebase/genkit/go/ai"
-        "github.com/firebase/genkit/go/genkit"
-        "github.com/firebase/genkit/go/plugins/googlegenai"
+	"github.com/firebase/genkit/go/ai"
+	"github.com/firebase/genkit/go/genkit"
 
-        "github.com/naqerl/yao/tool"
+	"github.com/naqerl/yao/model"
+	"github.com/naqerl/yao/tool"
 )
 
 func main() {
-        ctx := context.Background()
-        slog.Info("starting")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-        g := genkit.Init(ctx,
-                genkit.WithDefaultModel("googleai/gemini-2.5-flash"),
-                genkit.WithPlugins(&googlegenai.GoogleAI{}),
-        )
+	slog.Info("starting")
 
-        bashTool := tool.DefineBash(g)
+	g, err := Init(ctx)
+	if err != nil {
+		log.Fatalf("init failed: %s", err)
+	}
 
-        var chat []*ai.Message
-        agent := genkit.DefineFlow(g, "agent", func(ctx context.Context, task string) (string, error) {
+	bashTool := tool.DefineBash(g)
 
-                chat = append(chat, ai.NewUserMessage(ai.NewTextPart(task)))
-                resp, err := genkit.Generate(ctx, g,
-                        ai.WithTools(bashTool),
-                        ai.WithMessages(chat...),
-                )
-                chat = resp.History()
+	var chat []*ai.Message
+	agent := genkit.DefineFlow(g,
+		"agent",
+		func(ctx context.Context, task string) (string, error) {
+			chat = append(chat, ai.NewUserMessage(ai.NewTextPart(task)))
+			resp, err := genkit.Generate(ctx, g,
+				ai.WithTools(bashTool),
+				ai.WithMessages(chat...),
+				ai.WithMaxTurns(99999999),
+				ai.WithConfig(map[string]any{"max_tokens": 1024}),
+			)
+			if err != nil {
+				return "", err
+			}
+			chat = resp.History()
+			return resp.Text(), err
+		})
 
-                return resp.Text(), err
-        })
+	slog.Info("genkit inited")
 
-        slog.Info("genkit inited")
+	reader := bufio.NewReader(os.Stdin)
 
-        reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Print("> ")
+		prompt, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatalf("could not read from stdin")
+		}
 
-        for {
-                select {
-                case <-ctx.Done():
-                        os.Exit(0)
-                default:
-                        fmt.Print("> ")
-                        problem, err := reader.ReadString('\n')
-                        if err != nil {
-                                log.Fatalf("could not read from stdin")
-                        }
+		resp, err := agent.Run(ctx, prompt)
+		if err != nil {
+			slog.Error("failed to run flow", "with", err)
+		}
+		fmt.Println(resp)
+	}
+}
 
-                        resp, err := agent.Run(ctx, problem)
-                        if err != nil {
-                                slog.Error("failed to run flow", "with", err)
-                        }
-                        fmt.Println(resp)
+func Init(ctx context.Context) (*genkit.Genkit, error) {
+	var errs []error
 
-                }
-        }
+	for _, factory := range model.Factories {
+		g, err := factory(ctx)
+
+		if err == nil {
+			return g, nil
+		}
+
+		if _, ok := errors.AsType[*model.CredsNotSetError](err); ok {
+			errs = append(errs, err)
+			continue
+		}
+
+		return nil, fmt.Errorf("could not run factory: %w", err)
+	}
+
+	return nil, errors.Join(errs...)
 }
