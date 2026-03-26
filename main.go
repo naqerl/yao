@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/firebase/genkit/go/ai"
@@ -91,11 +93,19 @@ func readWithContext(ctx context.Context) (string, error) {
 	inChan := make(chan any)
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
-		prompt, err := reader.ReadString('\n')
-		if err != nil {
-			inChan <- err
-		} else {
-			inChan <- prompt
+		var b strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					// EOF (Ctrl+D) received, return what we have
+					inChan <- b.String()
+					return
+				}
+				inChan <- err
+				return
+			}
+			b.WriteString(line)
 		}
 	}()
 	select {
@@ -107,7 +117,5 @@ func readWithContext(ctx context.Context) (string, error) {
 		} else {
 			return "", d.(error)
 		}
-
 	}
-
 }
