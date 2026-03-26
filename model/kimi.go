@@ -44,11 +44,3 @@ func InitKimi(ctx context.Context) (*genkit.Genkit, error) {
 	})
 	return g, err
 }
-
-// func (c Config) GenOpts(tools []ai.ToolRef, msgs []*ai.Message) []ai.GenerateOption {
-//      return []ai.GenerateOption{
-//              ai.WithTools(tools...),
-//              ai.WithMessages(msgs...),
-//              ai.WithConfig(map[string]any{"max_tokens": c.MaxTokens}),
-//      }
-// }

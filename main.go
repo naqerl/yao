@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -16,11 +15,14 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/naqerl/yao/kaomoji"
 	"github.com/naqerl/yao/model"
 	"github.com/naqerl/yao/tool"
 )
 
 func main() {
+	initLogger()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -30,41 +32,43 @@ func main() {
 	if err != nil {
 		log.Fatalf("init failed: %s", err)
 	}
+	slog.Info("genkit inited")
 
 	bashTool := tool.DefineBash(g)
 
 	var chat []*ai.Message
-	agent := genkit.DefineFlow(g,
-		"agent",
-		func(ctx context.Context, task string) (string, error) {
-			chat = append(chat, ai.NewUserMessage(ai.NewTextPart(task)))
-			resp, err := genkit.Generate(ctx, g,
-				ai.WithTools(bashTool),
-				ai.WithMessages(chat...),
-				ai.WithMaxTurns(10^24),
-				ai.WithConfig(map[string]any{"max_tokens": 1024}),
-			)
-			if err != nil {
-				return "", err
-			}
-			chat = resp.History()
-			return resp.Text(), err
-		})
-
-	slog.Info("genkit inited")
-
 	for {
+		// Read user prompt
 		fmt.Print("> ")
 		prompt, err := readWithContext(ctx)
 		if err != nil {
 			log.Fatalf("could not read from stdin")
 		}
+		slog.Debug("got user prompt", "prompt", prompt)
+		fmt.Println("\n" + kaomoji.GetRandom())
 
-		resp, err := agent.Run(ctx, prompt)
-		if err != nil {
-			slog.Error("failed to run flow", "with", err)
+		// Call agent
+		chat = append(chat, ai.NewUserMessage(ai.NewTextPart(prompt)))
+		stream := genkit.GenerateStream(ctx, g,
+			ai.WithTools(bashTool),
+			ai.WithMessages(chat...),
+			ai.WithMaxTurns(10^24),
+			ai.WithConfig(map[string]any{"max_tokens": 1024}),
+		)
+
+		// Stream output
+		for result, err := range stream {
+			if err != nil {
+				log.Printf("Stream error: %v", err)
+				break
+			}
+			if result.Done {
+				chat = result.Response.History()
+			} else {
+				fmt.Print(result.Chunk.Text())
+			}
 		}
-		fmt.Println(resp)
+
 	}
 }
 
@@ -89,25 +93,47 @@ func Init(ctx context.Context) (*genkit.Genkit, error) {
 	return nil, errors.Join(errs...)
 }
 
+func initLogger() {
+	level := slog.LevelWarn
+	if logEnv := os.Getenv("LOG"); logEnv != "" {
+		switch strings.ToUpper(logEnv) {
+		case "DEBUG":
+			level = slog.LevelDebug
+		case "INFO":
+			level = slog.LevelInfo
+		case "WARN", "WARNING":
+			level = slog.LevelWarn
+		case "ERROR":
+			level = slog.LevelError
+		}
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+}
+
 func readWithContext(ctx context.Context) (string, error) {
 	inChan := make(chan any)
+
 	go func() {
-		reader := bufio.NewReader(os.Stdin)
+		scn := bufio.NewScanner(os.Stdin)
 		var b strings.Builder
 		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					// EOF (Ctrl+D) received, return what we have
-					inChan <- b.String()
-					return
-				}
-				inChan <- err
+			for scn.Scan() {
+				b.WriteString(scn.Text() + "\n")
+			}
+			if b.Len() > 0 {
+				inChan <- b.String()
 				return
 			}
-			b.WriteString(line)
+			if err := scn.Err(); err != nil {
+				inChan <- err
+			}
+			if b.Len() == 0 {
+				// Ignore empty string submission
+				continue
+			}
 		}
 	}()
+
 	select {
 	case <-ctx.Done():
 		return "", errors.New("context done")
