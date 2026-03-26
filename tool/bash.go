@@ -16,7 +16,7 @@ func DefineBash(g *genkit.Genkit) *ai.ToolDef[bashInput, bashOutput] {
 	return genkit.DefineTool(
 		g, "bash", "Execute bash command",
 		func(ctx *ai.ToolContext, input bashInput) (bashOutput, error) {
-			fmt.Printf("\n$ %s\n", input.Cmd)
+			fmt.Printf("$ %s\n", input.Cmd)
 			out, err := runBash(input)
 			if err != nil {
 				err = fmt.Errorf("could not run bash: %w", err)
