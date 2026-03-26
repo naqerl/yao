@@ -26,11 +26,15 @@ func main() {
 
         bashTool := tool.DefineBash(g)
 
+        var chat []*ai.Message
         agent := genkit.DefineFlow(g, "agent", func(ctx context.Context, task string) (string, error) {
+
+                chat = append(chat, ai.NewUserMessage(ai.NewTextPart(task)))
                 resp, err := genkit.Generate(ctx, g,
-                        ai.WithPrompt(task),
                         ai.WithTools(bashTool),
+                        ai.WithMessages(chat...),
                 )
+                chat = resp.History()
 
                 return resp.Text(), err
         })
