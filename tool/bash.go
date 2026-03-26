@@ -3,9 +3,9 @@ package tool
 import (
 	"bytes"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
@@ -16,12 +16,13 @@ func DefineBash(g *genkit.Genkit) *ai.ToolDef[bashInput, bashOutput] {
 	return genkit.DefineTool(
 		g, "bash", "Execute bash command",
 		func(ctx *ai.ToolContext, input bashInput) (bashOutput, error) {
-			slog.Info("[bash]", "command", input.Cmd)
+			fmt.Printf("\n=== bash -c '%s' ===\n", input.Cmd)
 			out, err := runBash(input)
 			if err != nil {
 				err = fmt.Errorf("could not run bash: %w", err)
 			}
-			slog.Info("[bash]", "out", out)
+			fmt.Print(out.String())
+			fmt.Printf("=== bash ===\n\n")
 			return out, err
 		})
 }
@@ -34,6 +35,32 @@ type bashOutput struct {
 	Stdout   string
 	Stderr   string
 	ExitCode int
+}
+
+func (o bashOutput) String() string {
+	var b strings.Builder
+
+	if len(o.Stdout) > 0 {
+		for _, line := range strings.Split(o.Stdout, "\n") {
+			b.WriteString("  " + line + "\n")
+		}
+	}
+
+	if len(o.Stderr) > 0 {
+		for _, line := range strings.Split(o.Stderr, "\n") {
+			b.WriteString("  " + line + "\n")
+		}
+
+	}
+
+	if b.Len() == 0 {
+		b.WriteString("[empty output]")
+	}
+	if o.ExitCode != 0 {
+		b.WriteString(fmt.Sprintf("exit code: %d", o.ExitCode))
+	}
+
+	return b.String()
 }
 
 func runBash(input bashInput) (bashOutput, error) {

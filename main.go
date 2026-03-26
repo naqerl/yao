@@ -39,7 +39,7 @@ func main() {
 			resp, err := genkit.Generate(ctx, g,
 				ai.WithTools(bashTool),
 				ai.WithMessages(chat...),
-				ai.WithMaxTurns(99999999),
+				ai.WithMaxTurns(10^24),
 				ai.WithConfig(map[string]any{"max_tokens": 1024}),
 			)
 			if err != nil {
@@ -51,11 +51,9 @@ func main() {
 
 	slog.Info("genkit inited")
 
-	reader := bufio.NewReader(os.Stdin)
-
 	for {
 		fmt.Print("> ")
-		prompt, err := reader.ReadString('\n')
+		prompt, err := readWithContext(ctx)
 		if err != nil {
 			log.Fatalf("could not read from stdin")
 		}
@@ -87,4 +85,29 @@ func Init(ctx context.Context) (*genkit.Genkit, error) {
 	}
 
 	return nil, errors.Join(errs...)
+}
+
+func readWithContext(ctx context.Context) (string, error) {
+	inChan := make(chan any)
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		prompt, err := reader.ReadString('\n')
+		if err != nil {
+			inChan <- err
+		} else {
+			inChan <- prompt
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", errors.New("context done")
+	case d := <-inChan:
+		if s, ok := d.(string); ok {
+			return s, nil
+		} else {
+			return "", d.(error)
+		}
+
+	}
+
 }
