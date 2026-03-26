@@ -9,7 +9,7 @@ import (
 
 type Factory = func(ctx context.Context) (*genkit.Genkit, error)
 
-var Factories = []Factory{InitKimi}
+var Factories = []Factory{InitOpencode, InitKimi}
 
 type CredsNotSetError struct {
 	Detail string

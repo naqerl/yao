@@ -2,10 +2,12 @@ module github.com/naqerl/yao
 
 go 1.26.1
 
-require github.com/firebase/genkit/go v1.5.0
+require (
+	github.com/firebase/genkit/go v1.5.0
+	github.com/openai/openai-go v1.8.2
+)
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.23.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

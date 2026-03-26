@@ -3,19 +3,18 @@ package model
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
-	"github.com/firebase/genkit/go/plugins/anthropic"
+	"github.com/firebase/genkit/go/plugins/compat_oai"
 )
 
 func InitKimi(ctx context.Context) (*genkit.Genkit, error) {
 	const (
 		apiKeyEnv = "KIMI_API_KEY"
 		modelName = "k2p5"
-		baseURL   = "https://api.kimi.com/coding"
+		baseURL   = "https://api.kimi.com/coding/v1"
 	)
 
 	apiKey := os.Getenv(apiKeyEnv)
@@ -23,15 +22,20 @@ func InitKimi(ctx context.Context) (*genkit.Genkit, error) {
 		return nil, &CredsNotSetError{Detail: apiKeyEnv}
 	}
 
-	provider := &anthropic.Anthropic{
-		APIKey:  apiKey,
-		BaseURL: baseURL,
+	// Use the OpenAI-compatible plugin since Kimi API is OpenAI-compatible
+	provider := &compat_oai.OpenAICompatible{
+		Provider: "kimi",
+		APIKey:   apiKey,
+		BaseURL:  baseURL,
 	}
+
 	g := genkit.Init(ctx,
 		genkit.WithPlugins(provider),
-		genkit.WithDefaultModel(fmt.Sprintf("anthropic/%s", modelName)),
+		genkit.WithDefaultModel("kimi/"+modelName),
 	)
-	_, err := provider.DefineModel(nil, modelName, &ai.ModelOptions{
+
+	// Define the model with its capabilities
+	provider.DefineModel("kimi", modelName, ai.ModelOptions{
 		Label:    "Kimi " + modelName,
 		Versions: []string{modelName},
 		Supports: &ai.ModelSupports{
@@ -42,5 +46,6 @@ func InitKimi(ctx context.Context) (*genkit.Genkit, error) {
 			ToolChoice: true,
 		},
 	})
-	return g, err
+
+	return g, nil
 }

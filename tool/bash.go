@@ -16,13 +16,11 @@ func DefineBash(g *genkit.Genkit) *ai.ToolDef[bashInput, bashOutput] {
 	return genkit.DefineTool(
 		g, "bash", "Execute bash command",
 		func(ctx *ai.ToolContext, input bashInput) (bashOutput, error) {
-			fmt.Printf("\n=== bash -c '%s' ===\n", input.Cmd)
+			fmt.Printf("\n$ %s\n", input.Cmd)
 			out, err := runBash(input)
 			if err != nil {
 				err = fmt.Errorf("could not run bash: %w", err)
 			}
-			fmt.Print(out.String())
-			fmt.Printf("=== bash ===\n\n")
 			return out, err
 		})
 }
@@ -42,13 +40,13 @@ func (o bashOutput) String() string {
 
 	if len(o.Stdout) > 0 {
 		for _, line := range strings.Split(o.Stdout, "\n") {
-			b.WriteString("  " + line + "\n")
+			b.WriteString("  " + strings.TrimSuffix(line, "\n") + "\n")
 		}
 	}
 
 	if len(o.Stderr) > 0 {
 		for _, line := range strings.Split(o.Stderr, "\n") {
-			b.WriteString("  " + line + "\n")
+			b.WriteString("  " + strings.TrimSuffix(line, "\n") + "\n")
 		}
 
 	}
