@@ -1,36 +1,37 @@
 #!/usr/bin/env bash
 
-printf '== date ==\n'
+printf 'Today: '
 date 2>/dev/null || true
-printf '\n== pwd ==\n'
+
+printf 'PWD: '
 pwd 2>/dev/null || true
-printf '\n== project tree ==\n'
-if git rev-parse --show-toplevel >/dev/null 2>&1; then
-  git ls-files --cached --others --exclude-standard 2>/dev/null || true
-elif command -v tree >/dev/null 2>&1; then
-  tree -a -L 3 . 2>/dev/null || true
-else
-  find . -maxdepth 3 -print 2>/dev/null | sort || true
-fi
-printf '\n== git status ==\n'
+
+echo '== project tree =='
+git ls-files --cached --others --exclude-standard 2>/dev/null || true
+
+echo '== git status =='
 git status --short --branch 2>/dev/null || true
-printf '\n== last 5 commits ==\n'
+
+echo '== last 5 commits =='
 git log --oneline -n 5 2>/dev/null || true
-printf '\n== root AGENTS.md ==\n'
-if [ -f AGENTS.md ]; then
-  cat AGENTS.md 2>/dev/null || true
-else
-  printf 'AGENTS.md not found\n'
-fi
-printf '\n== $HOME/.agents/skills ==\n'
-if [ -d "$HOME/.agents/skills" ]; then
-  ls -la "$HOME/.agents/skills" 2>/dev/null || true
-else
-  printf '%s\n' "$HOME/.agents/skills not found"
-fi
-printf '\n== $HOME/.agents/AGENTS.md ==\n'
-if [ -f "$HOME/.agents/AGENTS.md" ]; then
-  cat "$HOME/.agents/AGENTS.md" 2>/dev/null || true
-else
-  printf '%s\n' "$HOME/.agents/AGENTS.md not found"
-fi
+
+cat <<'EOF'
+== edit guide ==
+To edit files, you MUST use git-style patches.
+
+First, read the current file with cat filename.
+
+Then output a valid unified diff patch and apply it with:
+
+cat > /tmp/edit.patch << 'EOF' [your full patch here] EOF git apply /tmp/edit.patch && rm /tmp/edit.patch
+
+Always verify with git diff or cat filename after applying.
+EOF
+
+echo "== AGENTS.md =="
+cat AGENTS.md 2>/dev/null || true
+
+echo '== available skills =='
+ls -la "$HOME/.agents/skills" 2>/dev/null || true
+
+cat "$HOME/.agents/AGENTS.md" 2>/dev/null || true

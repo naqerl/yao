@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -17,6 +18,8 @@ import (
 	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/packages/respjson"
 	"github.com/openai/openai-go/shared"
+
+	"github.com/naqerl/yao/state"
 )
 
 const (
@@ -55,7 +58,7 @@ func NewOpenCodeGo(apiKey string) *OpenCodeGo {
 	}
 }
 
-func InitOpenCodeGo(ctx context.Context, state *RuntimeState) error {
+func InitOpenCodeGo(ctx context.Context, state *state.State) error {
 	const apiKeyEnv = "OPENCODE_API_KEY"
 
 	apiKey := os.Getenv(apiKeyEnv)
@@ -308,6 +311,15 @@ func (g *reasoningModelGenerator) WithConfig(config any) *reasoningModelGenerato
 		copy.Model = g.request.Model
 		g.request = &copy
 	case map[string]any:
+		// Log thinking config specifically
+		if thinking, ok := cfg["thinking"].(map[string]any); ok {
+			if typeVal, ok := thinking["type"].(string); ok {
+				slog.Debug("WithConfig: thinking configuration detected", "type", typeVal, "budget_tokens", thinking["budget_tokens"])
+			}
+		} else {
+			slog.Debug("WithConfig: no thinking configuration found in config")
+		}
+
 		body, err := json.Marshal(cfg)
 		if err != nil {
 			g.err = fmt.Errorf("failed to marshal config: %w", err)
@@ -355,6 +367,18 @@ func (g *reasoningModelGenerator) WithTools(tools []*ai.ToolDefinition) *reasoni
 	return g
 }
 
+func logFullRequest(g *reasoningModelGenerator, ctx context.Context) {
+	requestJSON, err := json.MarshalIndent(g.request, "", "  ")
+	if err != nil {
+		slog.Debug("Failed to marshal request for logging", "error", err)
+		return
+	}
+
+	slog.Debug("=== FULL API REQUEST ===")
+	slog.Debug(string(requestJSON))
+	slog.Debug("========================")
+}
+
 func (g *reasoningModelGenerator) Generate(ctx context.Context, req *ai.ModelRequest, handleChunk func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
 	if g.err != nil {
 		return nil, g.err
@@ -378,6 +402,8 @@ func (g *reasoningModelGenerator) Generate(ctx context.Context, req *ai.ModelReq
 }
 
 func (g *reasoningModelGenerator) generateStream(ctx context.Context, handleChunk func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
+	logFullRequest(g, ctx)
+
 	stream := g.client.Chat.Completions.NewStreaming(ctx, *g.request)
 	defer stream.Close()
 
@@ -441,6 +467,8 @@ func (g *reasoningModelGenerator) generateStream(ctx context.Context, handleChun
 }
 
 func (g *reasoningModelGenerator) generateComplete(ctx context.Context, req *ai.ModelRequest) (*ai.ModelResponse, error) {
+	logFullRequest(g, ctx)
+
 	completion, err := g.client.Chat.Completions.New(ctx, *g.request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create completion: %w", err)

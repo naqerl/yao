@@ -8,9 +8,11 @@ import (
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
+
+	"github.com/naqerl/yao/state"
 )
 
-func InitKimi(ctx context.Context, state *RuntimeState) error {
+func InitKimi(ctx context.Context, state *state.State) error {
 	const (
 		apiKeyEnv = "KIMI_API_KEY"
 		baseURL   = "https://api.kimi.com/coding/v1"

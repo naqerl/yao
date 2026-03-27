@@ -13,89 +13,54 @@ import (
 	"strings"
 	"syscall"
 
+	slogenv "github.com/cbrewster/slog-env"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/naqerl/yao/kaomoji"
-	"github.com/naqerl/yao/model"
-	"github.com/naqerl/yao/system"
-	"github.com/naqerl/yao/tool"
+	"github.com/naqerl/yao/state"
 )
 
 func main() {
-	promptFlag := flag.String("p", "", "single prompt to run and exit")
-	providerFlag := flag.String("provider", "", "provider to initialize")
-	modelFlag := flag.String("m", "", "model to use, optionally as provider/model")
-	thinkingFlag := flag.String("t", "off", "thinking level: off, low, medium, or high")
-	systemFlag := flag.String("s", "", "path to a system script")
+	var state state.State
+
+	// Parse CLI flags
+	flag.StringVar(&state.Provider, "provider", "",
+		"provider to initialize")
+	flag.StringVar(&state.Model, "m", "",
+		"model to use, optionally as provider/model")
+	flag.StringVar(&state.Thinking, "t", "off",
+		"thinking level: off, low, medium, high")
+	flag.StringVar(&state.SystemPath, "s", "",
+		"path to a system script")
 	flag.Parse()
 
-	initLogger()
+	// GO_LOG=info,mypackage=debug go run ./...
+	slog.SetDefault(slog.New(slogenv.NewHandler(slog.NewTextHandler(os.Stderr, nil))))
 
-	// Setup signal handling for graceful shutdown on SIGTERM only
-	// SIGINT will be handled per-prompt
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM)
-	defer signal.Stop(sigChan)
+	// Globally respect only SIGTERM
+	// SIGINT is handled on per operation basis
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
+	defer stop()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle SIGTERM for actual program exit
-	go func() {
-		<-sigChan
-		slog.Info("received SIGTERM, shutting down")
-		cancel()
-	}()
-
-	slog.Info("starting")
-
-	systemOutput, err := resolveSystemOutput(*systemFlag)
+	// Initialize state
+	err := state.Init()
 	if err != nil {
-		log.Fatalf("system script failed: %s", err)
+		log.Fatalf("init failed: %v", err)
 	}
+	fmt.Println(state.String())
 
-	state, err := resolveRuntimeState(*providerFlag, *modelFlag)
-	if err != nil {
-		log.Fatalf("state resolution failed: %s", err)
-	}
-	if err := model.Init(ctx, state); err != nil {
-		log.Fatalf("init failed: %s", err)
-	}
-	slog.Info("genkit inited", "provider", state.Provider, "model", state.Model)
-
-	bashTool := tool.DefineBash(state.Genkit)
-	thinkingConfig, err := makeThinkingConfig(*thinkingFlag)
-	if err != nil {
-		log.Fatalf("invalid thinking setting: %s", err)
-	}
-	fmt.Printf("provider: %s\nmodel: %s\nthinking: %s\n\n", state.Provider, state.Model, strings.ToLower(strings.TrimSpace(*thinkingFlag)))
-	var chat []*ai.Message
-
-	if *promptFlag != "" {
-		// For single prompt mode, create a cancellable context
-		promptCtx, promptCancel := context.WithCancel(ctx)
-		setupSigintHandler(promptCtx, promptCancel)
-		defer promptCancel()
-
-		if _, err := runPrompt(promptCtx, state.Genkit, bashTool, systemOutput, chat, *promptFlag, thinkingConfig); err != nil {
-			log.Fatalf("prompt failed: %s", err)
-		}
-		return
-	}
-
+	// Agent loop
 	for {
+		promptCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+
+		// Read user input
 		fmt.Print("> ")
-
-		// Create a cancellable context for this specific prompt (input + generation)
-		promptCtx, cancel := context.WithCancel(ctx)
-		setupSigintHandler(promptCtx, cancel)
-
 		prompt, err := readWithContext(promptCtx)
 		if err != nil {
-			cancel()
+			stop()
 			if errors.Is(err, context.Canceled) {
-				fmt.Println()
+				fmt.Println("[cancelled]")
 				continue
 			}
 			log.Fatalf("could not read from stdin")
@@ -103,61 +68,14 @@ func main() {
 		slog.Debug("got user prompt", "prompt", prompt)
 		fmt.Println("\n" + kaomoji.GetRandom())
 
-		updatedChat, err := runPrompt(promptCtx, state.Genkit, bashTool, systemOutput, chat, prompt, thinkingConfig)
-		cancel()
+		// Start LLM
+		err = runPrompt(promptCtx, &state, prompt)
+		stop()
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				fmt.Println("\n[cancelled]")
-				// Don't update chat history on cancellation to avoid partial state
-				continue
-			}
 			slog.Error("Prompt failed", "error", err)
 			continue
 		}
-		chat = updatedChat
 	}
-}
-
-// setupSigintHandler listens for SIGINT and cancels only the provided context
-func setupSigintHandler(ctx context.Context, cancel context.CancelFunc) {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt)
-
-	go func() {
-		select {
-		case <-sigChan:
-			slog.Debug("SIGINT received, cancelling current prompt")
-			cancel()
-		case <-ctx.Done():
-			// Context already done, clean up signal handler
-		}
-		signal.Stop(sigChan)
-	}()
-}
-
-func resolveSystemOutput(path string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return system.Default()
-	}
-	return system.Eval(path)
-}
-
-func initLogger() {
-	level := slog.LevelWarn
-	if logEnv := os.Getenv("LOG"); logEnv != "" {
-		switch strings.ToUpper(logEnv) {
-		case "DEBUG":
-			level = slog.LevelDebug
-		case "INFO":
-			level = slog.LevelInfo
-		case "WARN", "WARNING":
-			level = slog.LevelWarn
-		case "ERROR":
-			level = slog.LevelError
-		}
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 }
 
 func readWithContext(ctx context.Context) (string, error) {
@@ -194,73 +112,33 @@ func readWithContext(ctx context.Context) (string, error) {
 	}
 }
 
-func runPrompt(ctx context.Context, g *genkit.Genkit, bashTool ai.Tool, systemPrompt string, chat []*ai.Message, prompt string, config map[string]any) ([]*ai.Message, error) {
-	chat = append(chat, ai.NewUserMessage(ai.NewTextPart(prompt)))
-	stream := genkit.GenerateStream(ctx, g,
-		ai.WithSystem(systemPrompt),
-		ai.WithTools(bashTool),
-		ai.WithMessages(chat...),
+// func runPrompt(ctx context.Context, g *genkit.Genkit, bashTool ai.Tool, systemPrompt string, chat []*ai.Message, prompt string, config map[string]any) ([]*ai.Message, error) {
+func runPrompt(ctx context.Context, state *state.State, prompt string) error {
+	state.Chat = append(state.Chat, ai.NewUserMessage(ai.NewTextPart(prompt)))
+
+	stream := genkit.GenerateStream(ctx, state.Genkit,
+		ai.WithSystem(state.System),
+		ai.WithTools(state.Tools...),
+		ai.WithMessages(state.Chat...),
 		ai.WithMaxTurns(int(^uint(0)>>1)),
-		ai.WithConfig(config),
+		ai.WithConfig(state.GenerateConfig),
 	)
 
 	for result, err := range stream {
 		if err != nil {
-			return chat, err
+			// FIXME: Absolutely redicilous API that lost
+			// all of the progress if anything happens
+			// during streaming
+			return err
 		}
 		if result.Done {
 			fmt.Println()
-			return result.Response.History(), nil
+			state.Chat = result.Response.History()
+			return nil
 		}
+		// Just another one chunk
 		fmt.Print(result.Chunk.Text())
 	}
 
-	return chat, nil
-}
-
-func makeThinkingConfig(level string) (map[string]any, error) {
-	switch strings.ToLower(strings.TrimSpace(level)) {
-	case "", "off", "none", "disable", "disabled":
-		return map[string]any{
-			"thinking": map[string]any{
-				"type": "off",
-			},
-		}, nil
-	case "low", "medium", "high":
-		return map[string]any{
-			"thinking": map[string]any{
-				"type": "enabled",
-			},
-			"reasoning_effort": level,
-		}, nil
-	default:
-		return nil, fmt.Errorf("expected off, low, medium, or high, got %q", level)
-	}
-}
-
-func resolveRuntimeState(providerValue, modelValue string) (*model.RuntimeState, error) {
-	state := &model.RuntimeState{
-		Provider: strings.TrimSpace(providerValue),
-		Model:    strings.TrimSpace(modelValue),
-	}
-
-	if state.Provider == "" {
-		state.Provider = strings.TrimSpace(os.Getenv("YAO_PROVIDER"))
-	}
-	if state.Model == "" {
-		state.Model = strings.TrimSpace(os.Getenv("YAO_MODEL"))
-	}
-
-	if state.Model != "" && strings.Contains(state.Model, "/") {
-		parts := strings.SplitN(state.Model, "/", 2)
-		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-			return nil, fmt.Errorf("invalid model reference %q, expected provider/model", state.Model)
-		}
-		if state.Provider == "" {
-			state.Provider = strings.TrimSpace(parts[0])
-		}
-		state.Model = strings.TrimSpace(parts[1])
-	}
-
-	return state, nil
+	return nil
 }

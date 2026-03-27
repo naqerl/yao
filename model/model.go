@@ -5,19 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/firebase/genkit/go/genkit"
+	"github.com/naqerl/yao/state"
 )
-
-type RuntimeState struct {
-	Provider string
-	Model    string
-	Genkit   *genkit.Genkit
-}
 
 type ProviderSpec struct {
 	Name         string
 	DefaultModel string
-	Init         func(ctx context.Context, state *RuntimeState) error
+	Init         func(ctx context.Context, state *state.State) error
 }
 
 var Providers = map[string]ProviderSpec{
@@ -33,7 +27,7 @@ var Providers = map[string]ProviderSpec{
 	},
 }
 
-func Init(ctx context.Context, state *RuntimeState) error {
+func Init(ctx context.Context, state *state.State) error {
 	if state == nil {
 		return fmt.Errorf("runtime state is required")
 	}

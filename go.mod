@@ -3,6 +3,7 @@ module github.com/naqerl/yao
 go 1.26.1
 
 require (
+	github.com/cbrewster/slog-env v0.1.1
 	github.com/firebase/genkit/go v1.5.0
 	github.com/openai/openai-go v1.8.2
 )
