@@ -76,6 +76,7 @@ func main() {
 		// For single prompt mode, create a cancellable context
 		promptCtx, promptCancel := context.WithCancel(ctx)
 		setupSigintHandler(promptCtx, promptCancel)
+		defer promptCancel()
 
 		if _, err := runPrompt(promptCtx, state.Genkit, bashTool, systemOutput, chat, *promptFlag, thinkingConfig); err != nil {
 			log.Fatalf("prompt failed: %s", err)
@@ -85,21 +86,25 @@ func main() {
 
 	for {
 		fmt.Print("> ")
-		prompt, err := readWithContext(ctx)
+
+		// Create a cancellable context for this specific prompt (input + generation)
+		promptCtx, cancel := context.WithCancel(ctx)
+		setupSigintHandler(promptCtx, cancel)
+
+		prompt, err := readWithContext(promptCtx)
 		if err != nil {
+			cancel()
 			if errors.Is(err, context.Canceled) {
-				return
+				fmt.Println()
+				continue
 			}
 			log.Fatalf("could not read from stdin")
 		}
 		slog.Debug("got user prompt", "prompt", prompt)
 		fmt.Println("\n" + kaomoji.GetRandom())
 
-		// Create a cancellable context for this specific prompt
-		promptCtx, promptCancel := context.WithCancel(ctx)
-		setupSigintHandler(promptCtx, promptCancel)
-
 		updatedChat, err := runPrompt(promptCtx, state.Genkit, bashTool, systemOutput, chat, prompt, thinkingConfig)
+		cancel()
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				fmt.Println("\n[cancelled]")
