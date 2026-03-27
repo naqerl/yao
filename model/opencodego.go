@@ -41,6 +41,28 @@ var openCodeGoKnownModels = map[string]ai.ModelOptions{
 	},
 }
 
+func InitOpenCodeGo(ctx context.Context, modelName string) (*genkit.Genkit, error) {
+	const apiKeyEnv = "OPENCODE_API_KEY"
+
+	apiKey := os.Getenv(apiKeyEnv)
+	if apiKey == "" {
+		return nil, &CredsNotSetError{Detail: apiKeyEnv}
+	}
+
+	provider := NewOpenCodeGo(apiKey)
+	if modelName == "" {
+		modelName = openCodeGoDefaultModel()
+	}
+	if _, ok := openCodeGoSupportedModels()[modelName]; !ok {
+		return nil, fmt.Errorf("provider %s does not support model %q", openCodeGoProvider, modelName)
+	}
+
+	return genkit.Init(ctx,
+		genkit.WithPlugins(provider),
+		genkit.WithDefaultModel(openCodeGoProvider+"/"+modelName),
+	), nil
+}
+
 type OpenCodeGo struct {
 	*reasoningCompatibleProvider
 }
@@ -54,32 +76,6 @@ func NewOpenCodeGo(apiKey string) *OpenCodeGo {
 			openCodeGoSupportedModels(),
 		),
 	}
-}
-
-func InitOpenCodeGo(ctx context.Context, modelName string) (InitResult, error) {
-	const apiKeyEnv = "OPENCODE_API_KEY"
-
-	apiKey := os.Getenv(apiKeyEnv)
-	if apiKey == "" {
-		return InitResult{}, &CredsNotSetError{Detail: apiKeyEnv}
-	}
-
-	provider := NewOpenCodeGo(apiKey)
-	if modelName == "" {
-		modelName = openCodeGoDefaultModel()
-	}
-	if _, ok := openCodeGoSupportedModels()[modelName]; !ok {
-		return InitResult{}, fmt.Errorf("provider %s does not support model %q", openCodeGoProvider, modelName)
-	}
-
-	return InitResult{
-		Provider: openCodeGoProvider,
-		Model:    modelName,
-		Genkit: genkit.Init(ctx,
-			genkit.WithPlugins(provider),
-			genkit.WithDefaultModel(openCodeGoProvider+"/"+modelName),
-		),
-	}, nil
 }
 
 func openCodeGoSupportedModels() map[string]ai.ModelOptions {

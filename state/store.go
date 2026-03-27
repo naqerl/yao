@@ -1,4 +1,4 @@
-package session
+package state
 
 import (
 	"context"
@@ -14,30 +14,18 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	_ "modernc.org/sqlite"
 
-	"github.com/naqerl/yao/session/db"
 	sqldata "github.com/naqerl/yao/sql"
-	"github.com/naqerl/yao/state"
+	"github.com/naqerl/yao/state/db"
 )
-
-type Session struct {
-	ID      int64
-	CWD     string
-	History []*ai.Message
-}
 
 var ErrSessionNotFound = errors.New("session not found")
 
 type Store struct {
-	db      *sql.DB
-	queries *db.Queries
+	db *sql.DB
 }
 
-func Open(ctx context.Context) (*Store, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("context is required")
-	}
-
-	dbPath, err := path()
+func NewStore(ctx context.Context) (*Store, error) {
+	dbPath, err := storePath()
 	if err != nil {
 		return nil, err
 	}
@@ -63,24 +51,16 @@ func Open(ctx context.Context) (*Store, error) {
 	}
 
 	return &Store{
-		db:      conn,
-		queries: db.New(conn),
+		db: conn,
 	}, nil
 }
 
 func (s *Store) Close() error {
-	if s == nil || s.db == nil {
-		return nil
-	}
 	return s.db.Close()
 }
 
-func (s *Store) LoadLatestByCwd(ctx context.Context, state *state.State) error {
-	if s == nil {
-		return fmt.Errorf("store is required")
-	}
-
-	row, err := s.queries.GetLatestSessionByCwd(ctx, state.CWD)
+func (s *Store) LoadLatestByCwd(ctx context.Context, state *State) error {
+	row, err := db.New(s.db).GetLatestSessionByCwd(ctx, state.CWD)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSessionNotFound
@@ -100,18 +80,18 @@ func (s *Store) LoadLatestByCwd(ctx context.Context, state *state.State) error {
 	return nil
 }
 
-func (s *Store) Create(ctx context.Context, state *state.State) error {
-	if s == nil {
-		return fmt.Errorf("store is required")
-	}
-
-	session := Session{
+func (s *Store) Create(ctx context.Context, state *State) error {
+	session := struct {
+		ID      int64
+		CWD     string
+		History []*ai.Message
+	}{
 		ID:      sessionIDNow(),
 		CWD:     state.CWD,
 		History: nil,
 	}
 
-	if err := s.queries.CreateSession(ctx, db.CreateSessionParams{
+	if err := db.New(s.db).CreateSession(ctx, db.CreateSessionParams{
 		ID:    session.ID,
 		Cwd:   session.CWD,
 		Jsonb: "[]",
@@ -126,16 +106,13 @@ func (s *Store) Create(ctx context.Context, state *state.State) error {
 	return nil
 }
 
-func (s *Store) SaveHistory(ctx context.Context, state *state.State) error {
-	if s == nil {
-		return fmt.Errorf("store is required")
-	}
+func (s *Store) SaveHistory(ctx context.Context, state *State) error {
 	historyJSON, err := encodeHistory(state.Chat)
 	if err != nil {
 		return fmt.Errorf("encode history: %w", err)
 	}
 
-	if err := s.queries.SaveSessionHistory(ctx, db.SaveSessionHistoryParams{
+	if err := db.New(s.db).SaveSessionHistory(ctx, db.SaveSessionHistoryParams{
 		ID:    state.SessionID,
 		Cwd:   state.CWD,
 		Jsonb: historyJSON,
@@ -178,7 +155,7 @@ func decodeHistory(raw any) ([]*ai.Message, error) {
 	return history, nil
 }
 
-func path() (string, error) {
+func storePath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve user home: %w", err)
@@ -193,4 +170,13 @@ func sessionIDNow() int64 {
 		panic(fmt.Sprintf("parse session id: %v", err))
 	}
 	return id
+}
+
+// ListByCwd returns session summaries for the given CWD with message counts.
+func (s *Store) ListByCwd(ctx context.Context, cwd string) ([]db.ListSessionsByCwdRow, error) {
+	rows, err := db.New(s.db).ListSessionsByCwd(ctx, cwd)
+	if err != nil {
+		return nil, fmt.Errorf("query sessions: %w", err)
+	}
+	return rows, nil
 }

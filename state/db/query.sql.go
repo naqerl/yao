@@ -57,7 +57,7 @@ func (q *Queries) GetLatestSessionByCwd(ctx context.Context, cwd string) (GetLat
 const listSessionsByCwd = `-- name: ListSessionsByCwd :many
 SELECT
   id,
-  cast(json_array_length(history_json) as int) AS message_count
+  json_array_length(history_json) AS message_count
 FROM session
 WHERE cwd = ?
 ORDER BY id DESC
@@ -65,7 +65,7 @@ ORDER BY id DESC
 
 type ListSessionsByCwdRow struct {
 	ID           int64
-	MessageCount int64
+	MessageCount interface{}
 }
 
 func (q *Queries) ListSessionsByCwd(ctx context.Context, cwd string) ([]ListSessionsByCwdRow, error) {

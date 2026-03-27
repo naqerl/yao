@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,10 +11,14 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
-	"github.com/naqerl/yao/model"
 	"github.com/naqerl/yao/system"
-	"github.com/naqerl/yao/tool"
 )
+
+// Command is the interface for user-executable commands.
+type Command interface {
+	Execute(ctx context.Context, s *State) error
+	GetDescription() string
+}
 
 type State struct {
 	// Name of the provider, for example opencode-go.
@@ -38,37 +43,16 @@ type State struct {
 	CWD string
 	// History of the current session's messages
 	Chat []*ai.Message
+	// Available commands indexed by name
+	Commands map[string]Command
+	// Store for session persistence
+	Store *Store
 }
 
 // Init validates and resolves all required fields to work.
 // It is safe to call on a zero-value State, but not on a nil *State.
 func (s *State) Init(ctx context.Context) error {
-	if s == nil {
-		return fmt.Errorf("state is required")
-	}
-	if ctx == nil {
-		return fmt.Errorf("context is required")
-	}
-
-	s.Provider = strings.TrimSpace(s.Provider)
-	s.Model = strings.TrimSpace(s.Model)
-	s.Thinking = strings.ToLower(strings.TrimSpace(s.Thinking))
-	s.SystemPath = strings.TrimSpace(s.SystemPath)
-
-	switch s.Thinking {
-	case "", "off":
-		s.Thinking = "off"
-		s.GenerateConfig = nil
-	case "low":
-		s.GenerateConfig = thinkingConfig(s.Thinking, 1024)
-	case "medium":
-		s.GenerateConfig = thinkingConfig(s.Thinking, 4096)
-	case "high":
-		s.GenerateConfig = thinkingConfig(s.Thinking, 8192)
-	default:
-		return fmt.Errorf("invalid thinking level %q", s.Thinking)
-	}
-
+	// System prompt
 	var (
 		systemPrompt string
 		err          error
@@ -83,20 +67,43 @@ func (s *State) Init(ctx context.Context) error {
 	}
 	s.System = strings.TrimSpace(systemPrompt)
 
-	modelRuntime, err := model.Init(ctx, s.Provider, s.Model)
-	if err != nil {
+	// Genkit setup
+	if err := InitGenkit(ctx, s); err != nil {
 		return err
 	}
-	s.Provider = modelRuntime.Provider
-	s.Model = modelRuntime.Model
-	s.Genkit = modelRuntime.Genkit
 
-	s.Tools = []ai.ToolRef{
-		tool.DefineBash(s.Genkit),
-	}
+	// Project path
 	s.CWD, err = os.Getwd()
 	if err != nil {
 		return fmt.Errorf("resolve cwd: %w", err)
+	}
+
+	// Load or init session
+	s.Store, err = NewStore(ctx)
+	if err != nil {
+		return fmt.Errorf("could not open store: %w", err)
+	}
+	if err := s.Store.LoadLatestByCwd(ctx, s); errors.Is(err, ErrSessionNotFound) {
+		if err := s.Store.Create(ctx, s); err != nil {
+			return fmt.Errorf("create session: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("load session: %w", err)
+	}
+
+	// Thinking setup
+	switch s.Thinking {
+	case "", "off":
+		s.Thinking = "off"
+		s.GenerateConfig = nil
+	case "low":
+		s.GenerateConfig = thinkingConfig(s.Thinking, 1024)
+	case "medium":
+		s.GenerateConfig = thinkingConfig(s.Thinking, 4096)
+	case "high":
+		s.GenerateConfig = thinkingConfig(s.Thinking, 8192)
+	default:
+		return fmt.Errorf("invalid thinking level %q", s.Thinking)
 	}
 
 	return nil
@@ -104,10 +111,6 @@ func (s *State) Init(ctx context.Context) error {
 
 // String returns user friendly info about current state
 func (s *State) String() string {
-	if s == nil {
-		return "<nil>"
-	}
-
 	systemSource := "default"
 	if s.SystemPath != "" {
 		systemSource = s.SystemPath
@@ -124,14 +127,22 @@ func (s *State) String() string {
 	b.WriteString("    chat:   " + strconv.Itoa(len(s.Chat)) + "\n")
 	b.WriteString("  system:   " + systemSource + "\n")
 	b.WriteString("  tools:\n")
-	for _, toolRef := range s.Tools {
-		b.WriteString("    - " + toolRef.Name() + "\n")
+	for _, t := range s.Tools {
+		b.WriteString("    - " + t.Name() + "\n")
 	}
-	if len(s.Tools) == 0 {
-		b.WriteString("    []\n")
+	b.WriteString("  commands:\n")
+	for name, c := range s.Commands {
+		b.WriteString(fmt.Sprintf("    - %s: %s\n", name, c.GetDescription()))
 	}
 
 	return b.String()
+}
+
+func (s *State) Close() error {
+	if s.Store != nil {
+		return s.Store.Close()
+	}
+	return nil
 }
 
 func thinkingConfig(level string, budgetTokens int64) map[string]any {

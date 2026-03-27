@@ -17,22 +17,23 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/naqerl/yao/cmd"
 	"github.com/naqerl/yao/kaomoji"
-	"github.com/naqerl/yao/session"
 	"github.com/naqerl/yao/state"
+	"github.com/naqerl/yao/tool"
 )
 
 func main() {
-	var state state.State
+	var st state.State
 
 	// Parse CLI flags
-	flag.StringVar(&state.Provider, "provider", "",
+	flag.StringVar(&st.Provider, "provider", "",
 		"provider to initialize")
-	flag.StringVar(&state.Model, "m", "",
+	flag.StringVar(&st.Model, "m", "",
 		"model to use, optionally as provider/model")
-	flag.StringVar(&state.Thinking, "t", "off",
+	flag.StringVar(&st.Thinking, "t", "off",
 		"thinking level: off, low, medium, high")
-	flag.StringVar(&state.SystemPath, "s", "",
+	flag.StringVar(&st.SystemPath, "s", "",
 		"path to a system script")
 	flag.Parse()
 
@@ -48,32 +49,22 @@ func main() {
 	defer stop()
 
 	// Initialize state
-	if err := state.Init(ctx); err != nil {
+	if err := st.Init(ctx); err != nil {
 		log.Fatalf("init failed: %v", err)
 	}
-	store, err := session.Open(ctx)
-	if err != nil {
-		log.Fatalf("open session store failed: %v", err)
-	}
+
 	defer func() {
-		if err := store.Close(); err != nil {
-			slog.Error("close session store failed", "error", err)
+		if err := st.Close(); err != nil {
+			slog.Error("close store failed", "error", err)
 		}
 	}()
 
-	// Load last session or create a new one
-	err = store.LoadLatestByCwd(ctx, &state)
-	if errors.Is(err, session.ErrSessionNotFound) {
-		err = store.Create(ctx, &state)
-		if err != nil {
-			log.Fatalf("create session failed: %v", err)
-		}
-		slog.Info("created session", "id", state.SessionID, "cwd", state.CWD)
-	} else if err != nil {
-		log.Fatalf("load session failed: %v", err)
-	}
-	slog.Info("resumed session", "id", state.SessionID)
-	fmt.Println(state.String())
+	// Register commands and tools
+	cmd.Register(&st)
+	tool.Register(&st)
+
+	slog.Info("resumed session", "id", st.SessionID)
+	fmt.Println(st.String())
 
 	// Agent loop
 	for {
@@ -91,14 +82,28 @@ func main() {
 			log.Fatalf("could not read from stdin")
 		}
 		slog.Debug("got user prompt", "prompt", prompt)
+
+		// Check if input is a command
+		if cmdName, isCmd := cmd.IsCommand(prompt); isCmd {
+			command, ok := st.Commands[cmdName]
+			if !ok {
+				fmt.Printf("\nunknown command: /%s\n", cmdName)
+			} else if err := command.Execute(promptCtx, &st); err != nil {
+				slog.Error("command failed", "command", cmdName, "error", err)
+			}
+			stop()
+			continue
+		}
+
+		// Not a command, proceed with LLM
 		fmt.Println("\n" + kaomoji.GetRandom())
 
 		// Start LLM
-		err = runPrompt(promptCtx, &state, prompt)
+		err = runPrompt(promptCtx, &st, prompt)
 		fmt.Println()
 		stop()
-		if saveErr := store.SaveHistory(ctx, &state); saveErr != nil {
-			slog.Error("save session failed", "error", saveErr, "id", state.SessionID)
+		if saveErr := st.Store.SaveHistory(ctx, &st); saveErr != nil {
+			slog.Error("save session failed", "error", saveErr, "id", st.SessionID)
 		}
 		if err != nil {
 			slog.Error("Prompt failed", "error", err)
@@ -141,27 +146,27 @@ func readWithContext(ctx context.Context) (string, error) {
 	}
 }
 
-func runPrompt(ctx context.Context, state *state.State, prompt string) error {
-	state.Chat = append(state.Chat, ai.NewUserMessage(ai.NewTextPart(prompt)))
+func runPrompt(ctx context.Context, st *state.State, prompt string) error {
+	st.Chat = append(st.Chat, ai.NewUserMessage(ai.NewTextPart(prompt)))
 
-	stream := genkit.GenerateStream(ctx, state.Genkit,
-		ai.WithSystem(state.System),
-		ai.WithTools(state.Tools...),
-		ai.WithMessages(state.Chat...),
+	stream := genkit.GenerateStream(ctx, st.Genkit,
+		ai.WithSystem(st.System),
+		ai.WithTools(st.Tools...),
+		ai.WithMessages(st.Chat...),
 		ai.WithMaxTurns(int(^uint(0)>>1)),
-		ai.WithConfig(state.GenerateConfig),
+		ai.WithConfig(st.GenerateConfig),
 	)
 
-	acc := newStreamMessageAccumulator(len(state.Chat))
+	acc := newStreamMessageAccumulator(len(st.Chat))
 
 	for result, err := range stream {
 		if err != nil {
-			acc.Flush(&state.Chat)
+			acc.Flush(&st.Chat)
 			return err
 		}
 
 		if result.Done {
-			acc.Flush(&state.Chat)
+			acc.Flush(&st.Chat)
 			break
 		}
 
