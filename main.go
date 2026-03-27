@@ -18,6 +18,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/naqerl/yao/kaomoji"
+	"github.com/naqerl/yao/session"
 	"github.com/naqerl/yao/state"
 )
 
@@ -36,6 +37,9 @@ func main() {
 	flag.Parse()
 
 	// GO_LOG=info,mypackage=debug go run ./...
+	if os.Getenv("GO_LOG") == "" {
+		os.Setenv("GO_LOG", "warn")
+	}
 	slog.SetDefault(slog.New(slogenv.NewHandler(slog.NewTextHandler(os.Stderr, nil))))
 
 	// Globally respect only SIGTERM
@@ -44,10 +48,31 @@ func main() {
 	defer stop()
 
 	// Initialize state
-	err := state.Init(ctx)
-	if err != nil {
+	if err := state.Init(ctx); err != nil {
 		log.Fatalf("init failed: %v", err)
 	}
+	store, err := session.Open(ctx)
+	if err != nil {
+		log.Fatalf("open session store failed: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			slog.Error("close session store failed", "error", err)
+		}
+	}()
+
+	// Load last session or create a new one
+	err = store.LoadLatestByCwd(ctx, &state)
+	if errors.Is(err, session.ErrSessionNotFound) {
+		err = store.Create(ctx, &state)
+		if err != nil {
+			log.Fatalf("create session failed: %v", err)
+		}
+		slog.Info("created session", "id", state.SessionID, "cwd", state.CWD)
+	} else if err != nil {
+		log.Fatalf("load session failed: %v", err)
+	}
+	slog.Info("resumed session", "id", state.SessionID)
 	fmt.Println(state.String())
 
 	// Agent loop
@@ -72,6 +97,9 @@ func main() {
 		err = runPrompt(promptCtx, &state, prompt)
 		fmt.Println()
 		stop()
+		if saveErr := store.SaveHistory(ctx, &state); saveErr != nil {
+			slog.Error("save session failed", "error", saveErr, "id", state.SessionID)
+		}
 		if err != nil {
 			slog.Error("Prompt failed", "error", err)
 			continue

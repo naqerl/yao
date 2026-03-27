@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -31,6 +32,10 @@ type State struct {
 	Tools []ai.ToolRef
 	// Any additional setup which should be added to the Genkit.Generate method
 	GenerateConfig any
+	// Current persisted session ID.
+	SessionID int64
+	// Working directory the current session belongs to.
+	CWD string
 	// History of the current session's messages
 	Chat []*ai.Message
 }
@@ -89,6 +94,10 @@ func (s *State) Init(ctx context.Context) error {
 	s.Tools = []ai.ToolRef{
 		tool.DefineBash(s.Genkit),
 	}
+	s.CWD, err = os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve cwd: %w", err)
+	}
 
 	return nil
 }
@@ -106,15 +115,17 @@ func (s *State) String() string {
 
 	var b strings.Builder
 	b.WriteString("state:\n")
-	b.WriteString("  provider: " + yamlScalar(s.Provider) + "\n")
-	b.WriteString("  model:    " + yamlScalar(s.Model) + "\n")
-	b.WriteString("  thinking: " + yamlScalar(s.Thinking) + "\n")
-	b.WriteString("  system:\n")
-	b.WriteString("    source: " + yamlScalar(systemSource) + "\n")
-	b.WriteString("    loaded: " + strconv.FormatBool(strings.TrimSpace(s.System) != "") + "\n")
+	b.WriteString("  provider: " + s.Provider + "\n")
+	b.WriteString("  model:    " + s.Model + "\n")
+	b.WriteString("  thinking: " + s.Thinking + "\n")
+	b.WriteString("  session:\n")
+	b.WriteString("    id:     " + strconv.FormatInt(s.SessionID, 10) + "\n")
+	b.WriteString("    cwd:    " + s.CWD + "\n")
+	b.WriteString("    chat:   " + strconv.Itoa(len(s.Chat)) + "\n")
+	b.WriteString("  system:   " + systemSource + "\n")
 	b.WriteString("  tools:\n")
 	for _, toolRef := range s.Tools {
-		b.WriteString("    - " + yamlScalar(toolRef.Name()) + "\n")
+		b.WriteString("    - " + toolRef.Name() + "\n")
 	}
 	if len(s.Tools) == 0 {
 		b.WriteString("    []\n")
@@ -130,8 +141,4 @@ func thinkingConfig(level string, budgetTokens int64) map[string]any {
 			"budget_tokens": budgetTokens,
 		},
 	}
-}
-
-func yamlScalar(v string) string {
-	return strconv.Quote(v)
 }

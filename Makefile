@@ -7,6 +7,9 @@ dev:
 	pnpx genkit-cli config set analyticsOptOut true
 	pnpx genkit-cli start --non-interactive -- make run
 
+sqlc:
+	sqlc generate
+
 vet:
 	go fmt ./...
 	go vet ./...
