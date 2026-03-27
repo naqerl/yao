@@ -141,7 +141,6 @@ func readWithContext(ctx context.Context) (string, error) {
 	}
 }
 
-// func runPrompt(ctx context.Context, g *genkit.Genkit, bashTool ai.Tool, systemPrompt string, chat []*ai.Message, prompt string, config map[string]any) ([]*ai.Message, error) {
 func runPrompt(ctx context.Context, state *state.State, prompt string) error {
 	state.Chat = append(state.Chat, ai.NewUserMessage(ai.NewTextPart(prompt)))
 
