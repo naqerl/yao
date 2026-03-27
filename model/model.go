@@ -5,13 +5,19 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/naqerl/yao/state"
+	"github.com/firebase/genkit/go/genkit"
 )
+
+type InitResult struct {
+	Provider string
+	Model    string
+	Genkit   *genkit.Genkit
+}
 
 type ProviderSpec struct {
 	Name         string
 	DefaultModel string
-	Init         func(ctx context.Context, state *state.State) error
+	Init         func(ctx context.Context, model string) (InitResult, error)
 }
 
 var Providers = map[string]ProviderSpec{
@@ -27,34 +33,37 @@ var Providers = map[string]ProviderSpec{
 	},
 }
 
-func Init(ctx context.Context, state *state.State) error {
-	if state == nil {
-		return fmt.Errorf("runtime state is required")
+func Init(ctx context.Context, providerName, modelName string) (InitResult, error) {
+	providerName = strings.TrimSpace(providerName)
+	modelName = strings.TrimSpace(modelName)
+	if providerName == "" {
+		providerName = openCodeGoProvider
 	}
 
-	state.Provider = strings.TrimSpace(state.Provider)
-	state.Model = strings.TrimSpace(state.Model)
-	if state.Provider == "" {
-		state.Provider = openCodeGoProvider
-	}
-
-	provider, ok := Providers[state.Provider]
+	provider, ok := Providers[providerName]
 	if !ok {
-		return fmt.Errorf("unknown provider: %s", state.Provider)
+		return InitResult{}, fmt.Errorf("unknown provider: %s", providerName)
 	}
 
-	if state.Model == "" {
-		state.Model = provider.DefaultModel
+	if modelName == "" {
+		modelName = provider.DefaultModel
 	}
 
-	if err := provider.Init(ctx, state); err != nil {
-		return err
+	result, err := provider.Init(ctx, modelName)
+	if err != nil {
+		return InitResult{}, err
 	}
-	if state.Genkit == nil {
-		return fmt.Errorf("provider %s did not initialize genkit", state.Provider)
+	if result.Provider == "" {
+		result.Provider = providerName
+	}
+	if result.Model == "" {
+		result.Model = modelName
+	}
+	if result.Genkit == nil {
+		return InitResult{}, fmt.Errorf("provider %s did not initialize genkit", result.Provider)
 	}
 
-	return nil
+	return result, nil
 }
 
 type CredsNotSetError struct {

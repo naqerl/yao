@@ -8,11 +8,9 @@ import (
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
-
-	"github.com/naqerl/yao/state"
 )
 
-func InitKimi(ctx context.Context, state *state.State) error {
+func InitKimi(ctx context.Context, modelName string) (InitResult, error) {
 	const (
 		apiKeyEnv = "KIMI_API_KEY"
 		baseURL   = "https://api.kimi.com/coding/v1"
@@ -20,12 +18,11 @@ func InitKimi(ctx context.Context, state *state.State) error {
 
 	apiKey := os.Getenv(apiKeyEnv)
 	if apiKey == "" {
-		return &CredsNotSetError{Detail: apiKeyEnv}
+		return InitResult{}, &CredsNotSetError{Detail: apiKeyEnv}
 	}
 
-	modelName := state.Model
 	if modelName != "k2p5" {
-		return fmt.Errorf("provider kimi does not support model %q", modelName)
+		return InitResult{}, fmt.Errorf("provider kimi does not support model %q", modelName)
 	}
 
 	provider := newReasoningCompatibleProvider("kimi", apiKey, baseURL, map[string]ai.ModelOptions{
@@ -42,11 +39,12 @@ func InitKimi(ctx context.Context, state *state.State) error {
 		},
 	})
 
-	state.Provider = "kimi"
-	state.Model = modelName
-	state.Genkit = genkit.Init(ctx,
-		genkit.WithPlugins(provider),
-		genkit.WithDefaultModel("kimi/"+modelName),
-	)
-	return nil
+	return InitResult{
+		Provider: "kimi",
+		Model:    modelName,
+		Genkit: genkit.Init(ctx,
+			genkit.WithPlugins(provider),
+			genkit.WithDefaultModel("kimi/"+modelName),
+		),
+	}, nil
 }

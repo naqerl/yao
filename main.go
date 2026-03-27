@@ -44,7 +44,7 @@ func main() {
 	defer stop()
 
 	// Initialize state
-	err := state.Init()
+	err := state.Init(ctx)
 	if err != nil {
 		log.Fatalf("init failed: %v", err)
 	}

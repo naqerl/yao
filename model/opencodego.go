@@ -18,8 +18,6 @@ import (
 	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/packages/respjson"
 	"github.com/openai/openai-go/shared"
-
-	"github.com/naqerl/yao/state"
 )
 
 const (
@@ -58,30 +56,30 @@ func NewOpenCodeGo(apiKey string) *OpenCodeGo {
 	}
 }
 
-func InitOpenCodeGo(ctx context.Context, state *state.State) error {
+func InitOpenCodeGo(ctx context.Context, modelName string) (InitResult, error) {
 	const apiKeyEnv = "OPENCODE_API_KEY"
 
 	apiKey := os.Getenv(apiKeyEnv)
 	if apiKey == "" {
-		return &CredsNotSetError{Detail: apiKeyEnv}
+		return InitResult{}, &CredsNotSetError{Detail: apiKeyEnv}
 	}
 
 	provider := NewOpenCodeGo(apiKey)
-	modelName := state.Model
 	if modelName == "" {
 		modelName = openCodeGoDefaultModel()
 	}
 	if _, ok := openCodeGoSupportedModels()[modelName]; !ok {
-		return fmt.Errorf("provider %s does not support model %q", openCodeGoProvider, modelName)
+		return InitResult{}, fmt.Errorf("provider %s does not support model %q", openCodeGoProvider, modelName)
 	}
 
-	state.Provider = openCodeGoProvider
-	state.Model = modelName
-	state.Genkit = genkit.Init(ctx,
-		genkit.WithPlugins(provider),
-		genkit.WithDefaultModel(openCodeGoProvider+"/"+modelName),
-	)
-	return nil
+	return InitResult{
+		Provider: openCodeGoProvider,
+		Model:    modelName,
+		Genkit: genkit.Init(ctx,
+			genkit.WithPlugins(provider),
+			genkit.WithDefaultModel(openCodeGoProvider+"/"+modelName),
+		),
+	}, nil
 }
 
 func openCodeGoSupportedModels() map[string]ai.ModelOptions {
