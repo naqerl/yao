@@ -61,7 +61,7 @@ func main() {
 			stop()
 			if errors.Is(err, context.Canceled) {
 				fmt.Println("[cancelled]")
-				continue
+				break
 			}
 			log.Fatalf("could not read from stdin")
 		}
@@ -70,6 +70,7 @@ func main() {
 
 		// Start LLM
 		err = runPrompt(promptCtx, &state, prompt)
+		fmt.Println()
 		stop()
 		if err != nil {
 			slog.Error("Prompt failed", "error", err)
@@ -124,21 +125,74 @@ func runPrompt(ctx context.Context, state *state.State, prompt string) error {
 		ai.WithConfig(state.GenerateConfig),
 	)
 
+	acc := newStreamMessageAccumulator(len(state.Chat))
+
 	for result, err := range stream {
 		if err != nil {
-			// FIXME: Absolutely redicilous API that lost
-			// all of the progress if anything happens
-			// during streaming
+			acc.Flush(&state.Chat)
 			return err
 		}
+
 		if result.Done {
-			fmt.Println()
-			state.Chat = result.Response.History()
-			return nil
+			acc.Flush(&state.Chat)
+			break
 		}
-		// Just another one chunk
+
 		fmt.Print(result.Chunk.Text())
+		acc.Add(result.Chunk)
 	}
 
 	return nil
+}
+
+type streamMessageAccumulator struct {
+	baseIndex int
+	streamed  map[int]*ai.Message
+	order     []int
+}
+
+func newStreamMessageAccumulator(baseIndex int) *streamMessageAccumulator {
+	return &streamMessageAccumulator{
+		baseIndex: baseIndex,
+		streamed:  make(map[int]*ai.Message),
+	}
+}
+
+func (a *streamMessageAccumulator) Add(chunk *ai.ModelResponseChunk) {
+	if a == nil || chunk == nil || len(chunk.Content) == 0 {
+		return
+	}
+
+	idx := a.baseIndex + chunk.Index
+	msg, ok := a.streamed[idx]
+	if !ok {
+		role := chunk.Role
+		if role == "" {
+			role = ai.RoleModel
+		}
+		msg = &ai.Message{Role: role}
+		a.streamed[idx] = msg
+		a.order = append(a.order, idx)
+	}
+
+	msg.Content = append(msg.Content, chunk.Content...)
+}
+
+func (a *streamMessageAccumulator) Flush(dst *[]*ai.Message) {
+	if a == nil || dst == nil {
+		return
+	}
+
+	for _, idx := range a.order {
+		msg := a.streamed[idx]
+		if msg == nil || len(msg.Content) == 0 {
+			continue
+		}
+		for _, part := range msg.Content {
+			if part.IsToolRequest() {
+				slog.Debug("model message part before return", "part", fmt.Sprintf("%#v", part.ToolRequest))
+			}
+		}
+		*dst = append(*dst, msg)
+	}
 }

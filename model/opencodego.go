@@ -395,7 +395,9 @@ func (g *reasoningModelGenerator) generateStream(ctx context.Context, handleChun
 	var reasoningBuilder string
 	for stream.Next() {
 		chunk := stream.Current()
-		acc.AddChunk(chunk)
+		if !acc.AddChunk(chunk) {
+			return nil, fmt.Errorf("failed to accumulate stream chunk")
+		}
 
 		if len(chunk.Choices) == 0 {
 			continue
@@ -416,13 +418,17 @@ func (g *reasoningModelGenerator) generateStream(ctx context.Context, handleChun
 		if chunk.Choices[0].Delta.Content != "" {
 			modelChunk.Content = append(modelChunk.Content, ai.NewTextPart(chunk.Choices[0].Delta.Content))
 		}
-		for _, toolCall := range chunk.Choices[0].Delta.ToolCalls {
-			if toolCall.Function.Name == "" && toolCall.Function.Arguments == "" {
-				continue
+
+		if toolCall, ok := acc.JustFinishedToolCall(); ok {
+			var args any
+			if toolCall.Arguments != "" {
+				if err := json.Unmarshal([]byte(toolCall.Arguments), &args); err != nil {
+					return nil, fmt.Errorf("could not parse completed tool args: %w", err)
+				}
 			}
 			modelChunk.Content = append(modelChunk.Content, ai.NewToolRequestPart(&ai.ToolRequest{
-				Name:  toolCall.Function.Name,
-				Input: toolCall.Function.Arguments,
+				Name:  toolCall.Name,
+				Input: args,
 				Ref:   toolCall.ID,
 			}))
 		}
