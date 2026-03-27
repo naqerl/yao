@@ -24,6 +24,7 @@ const (
 	openCodeGoBaseURL         = "https://opencode.ai/zen/go/v1"
 	openCodeGoDefaultModelEnv = "OPENCODE_GO_MODEL"
 	openCodeGoExtraModelsEnv  = "OPENCODE_GO_EXTRA_MODELS"
+	openCodeGoFallbackModel   = "kimi-k2.5"
 )
 
 var openCodeGoKnownModels = map[string]ai.ModelOptions{
@@ -54,21 +55,30 @@ func NewOpenCodeGo(apiKey string) *OpenCodeGo {
 	}
 }
 
-func InitOpenCodeGo(ctx context.Context) (*genkit.Genkit, error) {
+func InitOpenCodeGo(ctx context.Context, state *RuntimeState) error {
 	const apiKeyEnv = "OPENCODE_API_KEY"
 
 	apiKey := os.Getenv(apiKeyEnv)
 	if apiKey == "" {
-		return nil, &CredsNotSetError{Detail: apiKeyEnv}
+		return &CredsNotSetError{Detail: apiKeyEnv}
 	}
 
 	provider := NewOpenCodeGo(apiKey)
-	modelName := openCodeGoDefaultModel()
+	modelName := state.Model
+	if modelName == "" {
+		modelName = openCodeGoDefaultModel()
+	}
+	if _, ok := openCodeGoSupportedModels()[modelName]; !ok {
+		return fmt.Errorf("provider %s does not support model %q", openCodeGoProvider, modelName)
+	}
 
-	return genkit.Init(ctx,
+	state.Provider = openCodeGoProvider
+	state.Model = modelName
+	state.Genkit = genkit.Init(ctx,
 		genkit.WithPlugins(provider),
 		genkit.WithDefaultModel(openCodeGoProvider+"/"+modelName),
-	), nil
+	)
+	return nil
 }
 
 func openCodeGoSupportedModels() map[string]ai.ModelOptions {
@@ -98,7 +108,7 @@ func openCodeGoSupportedModels() map[string]ai.ModelOptions {
 func openCodeGoDefaultModel() string {
 	model := strings.TrimSpace(os.Getenv(openCodeGoDefaultModelEnv))
 	if model == "" {
-		return "kimi-k2.5"
+		return openCodeGoFallbackModel
 	}
 	return model
 }
