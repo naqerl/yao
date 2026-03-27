@@ -365,18 +365,6 @@ func (g *reasoningModelGenerator) WithTools(tools []*ai.ToolDefinition) *reasoni
 	return g
 }
 
-func logFullRequest(g *reasoningModelGenerator, ctx context.Context) {
-	requestJSON, err := json.MarshalIndent(g.request, "", "  ")
-	if err != nil {
-		slog.Debug("Failed to marshal request for logging", "error", err)
-		return
-	}
-
-	slog.Debug("=== FULL API REQUEST ===")
-	slog.Debug(string(requestJSON))
-	slog.Debug("========================")
-}
-
 func (g *reasoningModelGenerator) Generate(ctx context.Context, req *ai.ModelRequest, handleChunk func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
 	if g.err != nil {
 		return nil, g.err
@@ -400,8 +388,6 @@ func (g *reasoningModelGenerator) Generate(ctx context.Context, req *ai.ModelReq
 }
 
 func (g *reasoningModelGenerator) generateStream(ctx context.Context, handleChunk func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
-	logFullRequest(g, ctx)
-
 	stream := g.client.Chat.Completions.NewStreaming(ctx, *g.request)
 	defer stream.Close()
 
@@ -465,8 +451,6 @@ func (g *reasoningModelGenerator) generateStream(ctx context.Context, handleChun
 }
 
 func (g *reasoningModelGenerator) generateComplete(ctx context.Context, req *ai.ModelRequest) (*ai.ModelResponse, error) {
-	logFullRequest(g, ctx)
-
 	completion, err := g.client.Chat.Completions.New(ctx, *g.request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create completion: %w", err)
