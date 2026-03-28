@@ -80,6 +80,28 @@ func (s *Store) LoadLatestByCwd(ctx context.Context, state *State) error {
 	return nil
 }
 
+// LoadByID loads a specific session by ID for the given CWD.
+func (s *Store) LoadByID(ctx context.Context, state *State, id int64) error {
+	row, err := db.New(s.db).GetSessionByID(ctx, db.GetSessionByIDParams{Cwd: state.CWD, ID: id})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("query session by id: %w", err)
+	}
+
+	history, err := decodeHistory(row.HistoryJson)
+	if err != nil {
+		return fmt.Errorf("decode history for session %d: %w", row.ID, err)
+	}
+
+	state.SessionID = row.ID
+	state.CWD = row.Cwd
+	state.Chat = history
+
+	return nil
+}
+
 func (s *Store) Create(ctx context.Context, state *State) error {
 	session := struct {
 		ID      int64

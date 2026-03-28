@@ -35,3 +35,11 @@ SELECT
 FROM session
 WHERE cwd = ?
 ORDER BY id DESC;
+
+-- name: GetSessionByID :one
+SELECT
+  id,
+  cwd,
+  json(history_json) AS history_json
+FROM session
+WHERE cwd = ? AND id = ?;

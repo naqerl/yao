@@ -88,7 +88,7 @@ func main() {
 			command, ok := st.Commands[cmdName]
 			if !ok {
 				fmt.Printf("\nunknown command: /%s\n", cmdName)
-			} else if err := command.Execute(promptCtx, &st); err != nil {
+			} else if err := command.Execute(promptCtx, &st, prompt); err != nil {
 				slog.Error("command failed", "command", cmdName, "error", err)
 			}
 			stop()

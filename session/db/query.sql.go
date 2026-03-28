@@ -54,6 +54,33 @@ func (q *Queries) GetLatestSessionByCwd(ctx context.Context, cwd string) (GetLat
 	return i, err
 }
 
+const getSessionByID = `-- name: GetSessionByID :one
+SELECT
+  id,
+  cwd,
+  json(history_json) AS history_json
+FROM session
+WHERE cwd = ? AND id = ?
+`
+
+type GetSessionByIDParams struct {
+	Cwd string
+	ID  int64
+}
+
+type GetSessionByIDRow struct {
+	ID          int64
+	Cwd         string
+	HistoryJson interface{}
+}
+
+func (q *Queries) GetSessionByID(ctx context.Context, arg GetSessionByIDParams) (GetSessionByIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getSessionByID, arg.Cwd, arg.ID)
+	var i GetSessionByIDRow
+	err := row.Scan(&i.ID, &i.Cwd, &i.HistoryJson)
+	return i, err
+}
+
 const listSessionsByCwd = `-- name: ListSessionsByCwd :many
 SELECT
   id,
