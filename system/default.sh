@@ -83,7 +83,7 @@ CRITICAL RULES:
 - Use read (not cat) before editing - it enables change detection
 - Whitespace matters - copy exact tabs/spaces/newlines
 - For multi-line strings, include \n explicitly
-- The tool will show context if old_string matches multiple places
+- If old_string matches multiple places, the tool will fail and suggest using replace_all
 
 ---
 

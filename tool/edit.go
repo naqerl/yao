@@ -68,8 +68,21 @@ func performEdit(input editInput, s *state.State) (editOutput, error) {
 		return out, fmt.Errorf("new_string is required")
 	}
 
+	// Read file first to avoid TOCTOU race condition
+	content, err := os.ReadFile(input.Path)
+	if err != nil {
+		return out, fmt.Errorf("cannot read file: %w", err)
+	}
+
+	// Get file info to preserve permissions
+	fileInfo, err := os.Stat(input.Path)
+	if err != nil {
+		return out, fmt.Errorf("cannot stat file: %w", err)
+	}
+
+	// Validate against snapshot after reading (prevents race condition)
 	if s.FileTracker != nil {
-		changed, hasSnapshot, err := s.FileTracker.GetChangeInfo(input.Path)
+		changed, hasSnapshot, err := s.FileTracker.CheckContent(input.Path, content)
 		if err != nil {
 			return out, fmt.Errorf("cannot check file state: %w", err)
 		}
@@ -96,11 +109,6 @@ func performEdit(input editInput, s *state.State) (editOutput, error) {
 	}
 	if modes > 1 {
 		return out, fmt.Errorf("only one operation mode allowed")
-	}
-
-	content, err := os.ReadFile(input.Path)
-	if err != nil {
-		return out, fmt.Errorf("cannot read file: %w", err)
 	}
 
 	original := string(content)
@@ -176,7 +184,8 @@ func performEdit(input editInput, s *state.State) (editOutput, error) {
 		return out, fmt.Errorf("no changes")
 	}
 
-	if err := os.WriteFile(input.Path, []byte(newContent), 0644); err != nil {
+	// Preserve original file permissions
+	if err := os.WriteFile(input.Path, []byte(newContent), fileInfo.Mode()); err != nil {
 		return out, fmt.Errorf("cannot write: %w", err)
 	}
 
