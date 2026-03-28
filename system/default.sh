@@ -17,23 +17,98 @@ git log --oneline -n 5 2>/dev/null || true
 
 cat <<'GUIDEEOF'
 == how to edit files  ==
-Use old_string/new_string exact matching.
 
-First, read the file: cat filename
+PREFERRED METHOD: Use the write tool
 
-Then apply surgical edits using one of these methods:
+The write tool supports multiple operations:
 
-1. SINGLE-LINE or EXACT BLOCK REPLACEMENT - Use sed with exact match:
+1. REPLACE - Replace exact text:
+   write:0 {
+     "path": "filename.go",
+     "old_string": "foo",
+     "new_string": "bar"
+   }
+
+2. INSERT AFTER - Insert after existing text (keeps old_string):
+   write:1 {
+     "path": "filename.go",
+     "old_string": "line before insertion",
+     "new_string": "new inserted line\n",
+     "insert_after": true
+   }
+
+3. INSERT AT LINE - Insert at specific line number:
+   write:2 {
+     "path": "filename.go",
+     "new_string": "// New comment",
+     "insert_line": 1
+   }
+   # insert_line: 1 = beginning, 5 = after line 4, 9999 = end
+
+4. APPEND TO END - Add to end of file:
+   write:3 {
+     "path": "filename.go",
+     "new_string": "// End of file",
+     "append": true
+   }
+
+5. REPLACE ALL - Replace all occurrences:
+   write:4 {
+     "path": "filename.go",
+     "old_string": "oldValue",
+     "new_string": "newValue",
+     "replace_all": true
+   }
+
+READING FILES SAFELY:
+
+Before editing, use read to track file state:
+
+   read:0 {
+     "path": "filename.go"
+   }
+
+Or read a specific range:
+   read:1 {
+     "path": "filename.go",
+     "offset": 10,
+     "limit": 20
+   }
+
+IMPORTANT: The write tool will FAIL if the file was modified after your last 
+read. This prevents editing stale content. If you get a "file changed" 
+error, re-read the file with read and retry with updated old_string.
+
+CRITICAL RULES:
+- Use read (not cat) before editing - it enables change detection
+- Whitespace matters - copy exact tabs/spaces/newlines
+- For multi-line strings, include \n explicitly
+- The tool will show context if old_string matches multiple places
+
+---
+
+FALLBACK METHODS (when tools unavailable):
+
+1. SINGLE-LINE or EXACT BLOCK REPLACEMENT - Use sed:
    # Verify the exact line first
    grep -n "exact line content" filename
 
    # Replace single line
    sed -i 's/const OldValue = 10/const NewValue = 20/' filename
 
+   # Insert after a line
+   sed -i '/pattern/a\new line content' filename
+
+   # Insert at beginning
+   sed -i '1i\new first line' filename
+
+   # Append to end
+   echo "new last line" >> filename
+
    # Delete exact line
    sed -i '/^func unusedFunc/d' filename
 
-2. MULTI-LINE BLOCK REPLACEMENT - Use ed with exact strings:
+2. MULTI-LINE BLOCK REPLACEMENT - Use ed:
    ed filename << 'EDCMDS'
    /^func Init.*error {$/  # find exact function signature
    /^}/                    # go to closing brace
@@ -71,7 +146,7 @@ Then apply surgical edits using one of these methods:
    EOF
 
 CRITICAL RULES:
-- ALWAYS verify exact content with cat/grep first
+- ALWAYS verify exact content with cat -n first
 - Whitespace matters - use tabs/exactly as shown
 - If sed/ed fails, use cat for full rewrite
 - Never use git apply (whitespace fragile)
