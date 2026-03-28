@@ -16,7 +16,7 @@ import (
 
 // Command is the interface for user-executable commands.
 type Command interface {
-	Execute(ctx context.Context, s *State) error
+	Execute(ctx context.Context, s *State, args string) error
 	GetDescription() string
 }
 
@@ -47,6 +47,8 @@ type State struct {
 	Commands map[string]Command
 	// Store for session persistence
 	Store *Store
+	// FileTracker tracks file content to detect external modifications.
+	FileTracker *FileTracker
 }
 
 // Init validates and resolves all required fields to work.
@@ -83,6 +85,7 @@ func (s *State) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("could not open store: %w", err)
 	}
+	s.FileTracker = NewFileTracker()
 	if err := s.Store.LoadLatestByCwd(ctx, s); errors.Is(err, ErrSessionNotFound) {
 		if err := s.Store.Create(ctx, s); err != nil {
 			return fmt.Errorf("create session: %w", err)
