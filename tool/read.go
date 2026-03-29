@@ -30,7 +30,7 @@ Use offset and limit parameters to read specific ranges. Omit both to read the e
 				out.Success = true
 				out.Message = content
 			}
-			return out, err
+			return out, nil
 		})
 }
 
@@ -79,21 +79,11 @@ func performRead(input readInput, s *state.State) (string, error) {
 		b.WriteString(fmt.Sprintf("%6d\t%s\n", input.Offset+i, line))
 	}
 
-	comment := fmt.Sprintf("→ read %s", input.Path)
-
 	if diff := len(allLines) - len(lines); diff > 0 {
-		b.WriteString(fmt.Sprintf("<system>%d more lines</system>\n", diff))
-		// Show 1-indexed line numbers in comment
-		endLine := input.Offset + len(lines) - 1
-		if input.Limit == 0 {
-			endLine = len(allLines)
-		}
-		comment += fmt.Sprintf(" (lines %d-%d of %d)", input.Offset, endLine, len(allLines))
+		b.WriteString(fmt.Sprintf("<system>%d more lines - call `read` tool without limit/offset to see full content</system>\n", diff))
 	}
 
 	s.FileTracker.RecordSnapshot(input.Path, content)
-
-	fmt.Println(comment)
 
 	return b.String(), nil
 }
