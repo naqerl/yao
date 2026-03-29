@@ -47,10 +47,10 @@ type readOutput struct {
 // TODO: Add proper boundary error return
 func performRead(input readInput, s *state.State) (string, error) {
 	if input.Offset < 0 {
-		return "", fmt.Errorf("offset should be >=0, got %d", input.Offset)
+		return "", fmt.Errorf("offset should be >= 0, got %d", input.Offset)
 	}
 	if input.Limit < 0 {
-		return "", fmt.Errorf("limit should be >= 0, god %d", input.Limit)
+		return "", fmt.Errorf("limit should be >= 0, got %d", input.Limit)
 	}
 
 	// Read fully to build a complete hash in file tracker
@@ -62,10 +62,12 @@ func performRead(input readInput, s *state.State) (string, error) {
 	allLines := strings.Split(string(content), "\n")
 
 	fromIdx := input.Offset
-	toIdx := input.Offset + input.Limit
-
-	if toIdx > len(allLines) {
-		return "", fmt.Errorf("wrong input offset+limit (%d) > allLines (%d)", toIdx, len(allLines))
+	toIdx := len(allLines)
+	if input.Limit > 0 {
+		toIdx = input.Offset + input.Limit
+		if toIdx > len(allLines) {
+			return "", fmt.Errorf("offset+limit (%d) exceeds file length (%d lines)", toIdx, len(allLines))
+		}
 	}
 
 	lines := allLines[fromIdx:toIdx]
