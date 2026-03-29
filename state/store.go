@@ -254,3 +254,16 @@ func (s *Store) ListByCwd(ctx context.Context, cwd string) ([]SessionSummary, er
 
 	return summaries, nil
 }
+
+// GetConfig retrieves a config value by key.
+func (s *Store) GetConfig(ctx context.Context, key string) (string, error) {
+	return db.New(s.db).GetConfig(ctx, key)
+}
+
+// SetConfig saves a config value for the given key.
+func (s *Store) SetConfig(ctx context.Context, key, value string) error {
+	return db.New(s.db).SetConfig(ctx, db.SetConfigParams{
+		Key:   key,
+		Value: value,
+	})
+}

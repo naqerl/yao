@@ -52,6 +52,8 @@ type State struct {
 	// Bus is a channel for output messages instead of direct stdout writes.
 	// Initialized in Init, drained and closed in Close.
 	Bus chan string
+	// Verbose controls whether thinking blocks are printed in full or collapsed.
+	Verbose bool
 }
 
 // Init validates and resolves all required fields to work.
@@ -92,6 +94,12 @@ func (s *State) Init(ctx context.Context) error {
 		return fmt.Errorf("could not open store: %w", err)
 	}
 	s.FileTracker = NewFileTracker()
+
+	// Load verbose config (defaults to false if not set)
+	if v, err := s.Store.GetConfig(ctx, "verbose"); err == nil {
+		s.Verbose = v == "true"
+	}
+
 	if err := s.Store.LoadLatestByCwd(ctx, s); errors.Is(err, ErrSessionNotFound) {
 		if err := s.Store.Create(ctx, s); err != nil {
 			return fmt.Errorf("create session: %w", err)
@@ -134,6 +142,7 @@ func (s *State) String() string {
 	b.WriteString("  provider: " + s.Provider + "\n")
 	b.WriteString("  model:    " + s.Model + "\n")
 	b.WriteString("  thinking: " + s.Thinking + "\n")
+	b.WriteString("  verbose:  " + strconv.FormatBool(s.Verbose) + "\n")
 	b.WriteString("  session:\n")
 	b.WriteString("    id:     " + strconv.FormatInt(s.SessionID, 10) + "\n")
 	b.WriteString("    cwd:    " + s.CWD + "\n")
