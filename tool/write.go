@@ -112,33 +112,38 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 	}
 
 	original := string(content)
+	oldLines := strings.Split(original, "\n")
 	var newContent, msg string
-	oldLines := len(strings.Split(original, "\n"))
+	removed, added := 0, 0
 
 	switch {
 	case input.InsertLine >= 1 || input.Append:
-		lines := strings.Split(original, "\n")
 		// Convert 1-indexed InsertLine to 0-indexed insert position
 		insertAt := input.InsertLine - 1
 		if input.Append {
-			insertAt = len(lines)
+			insertAt = len(oldLines)
 		}
 		// Clamp to valid range
 		if insertAt < 0 {
 			insertAt = 0
 		}
-		if insertAt > len(lines) {
-			insertAt = len(lines)
+		if insertAt > len(oldLines) {
+			insertAt = len(oldLines)
 		}
 		newLines := strings.Split(input.NewString, "\n")
 
 		// Ensure proper newline handling when appending to file without trailing newline
+		lines := oldLines
 		if input.Append && len(lines) > 0 && len(lines[len(lines)-1]) > 0 {
 			lines[len(lines)-1] += "\n"
 		}
 
 		result := insertLinesAt(lines, insertAt, newLines)
 		newContent = strings.Join(result, "\n")
+
+		added = len(newLines)
+		// For insertion, nothing is removed (we're adding between existing lines)
+		removed = 0
 
 		if input.Append {
 			msg = fmt.Sprintf("Appended %d lines", len(newLines))
@@ -161,6 +166,9 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 		insertPoint := idx + len(input.OldString)
 		newContent = original[:insertPoint] + input.NewString + original[insertPoint:]
 		msg = "Inserted after anchor"
+		// For insert_after, we add new lines but don't remove anything
+		added = len(strings.Split(input.NewString, "\n"))
+		removed = 0
 
 	default:
 		if input.OldString == "" {
@@ -176,9 +184,14 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 		if input.ReplaceAll {
 			newContent = strings.ReplaceAll(original, input.OldString, input.NewString)
 			msg = fmt.Sprintf("Replaced %d occurrences", count)
+			// For replace_all, count all occurrences
+			added = len(strings.Split(input.NewString, "\n")) * count
+			removed = len(strings.Split(input.OldString, "\n")) * count
 		} else {
 			newContent = strings.Replace(original, input.OldString, input.NewString, 1)
 			msg = "Replaced 1 occurrence"
+			added = len(strings.Split(input.NewString, "\n"))
+			removed = len(strings.Split(input.OldString, "\n"))
 		}
 	}
 
@@ -193,8 +206,7 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 
 	s.FileTracker.RecordSnapshot(input.Path, []byte(newContent))
 
-	newLines := len(strings.Split(newContent, "\n"))
-	stats := formatLineStats(oldLines, newLines)
+	stats := formatDiffStats(removed, added)
 
 	return msg, stats, nil
 }
@@ -208,14 +220,17 @@ func insertLinesAt(original []string, at int, newLines []string) []string {
 	return result
 }
 
-// formatLineStats returns a git-style line change summary like "+5/-3" or "+10"
-func formatLineStats(oldCount, newCount int) string {
-	added := newCount - oldCount
-	if added > 0 {
+// formatDiffStats returns a git-style line change summary like "+5/-3" or "+10"
+// Shows actual lines added and removed (not just net change)
+func formatDiffStats(removed, added int) string {
+	if removed == 0 && added == 0 {
+		return "0"
+	}
+	if removed == 0 {
 		return fmt.Sprintf("+%d", added)
 	}
-	if added < 0 {
-		return fmt.Sprintf("%d", added) // negative number already has minus sign
+	if added == 0 {
+		return fmt.Sprintf("-%d", removed)
 	}
-	return "0"
+	return fmt.Sprintf("+%d/-%d", added, removed)
 }
