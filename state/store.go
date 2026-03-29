@@ -14,14 +14,20 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	_ "modernc.org/sqlite"
 
+	"github.com/naqerl/yao/db"
 	sqldata "github.com/naqerl/yao/sql"
-	"github.com/naqerl/yao/state/db"
 )
 
 var ErrSessionNotFound = errors.New("session not found")
 
 type Store struct {
 	db *sql.DB
+}
+
+// SessionSummary holds session info with user message count.
+type SessionSummary struct {
+	ID               int64
+	UserMessageCount int64
 }
 
 func NewStore(ctx context.Context) (*Store, error) {
@@ -177,6 +183,39 @@ func decodeHistory(raw any) ([]*ai.Message, error) {
 	return history, nil
 }
 
+// messageForCounting is a minimal struct for unmarshaling just the role field.
+type messageForCounting struct {
+	Role ai.Role `json:"role"`
+}
+
+// countUserMessages unmarshals JSON history and counts only user messages.
+func countUserMessages(raw any) (int64, error) {
+	if raw == nil {
+		return 0, nil
+	}
+
+	text, ok := raw.(string)
+	if !ok {
+		return 0, fmt.Errorf("unexpected history json type %T", raw)
+	}
+	if text == "" || text == "[]" {
+		return 0, nil
+	}
+
+	var messages []messageForCounting
+	if err := json.Unmarshal([]byte(text), &messages); err != nil {
+		return 0, err
+	}
+
+	var count int64
+	for _, m := range messages {
+		if m.Role == ai.RoleUser {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func storePath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -194,11 +233,24 @@ func sessionIDNow() int64 {
 	return id
 }
 
-// ListByCwd returns session summaries for the given CWD with message counts.
-func (s *Store) ListByCwd(ctx context.Context, cwd string) ([]db.ListSessionsByCwdRow, error) {
+// ListByCwd returns session summaries for the given CWD with user message counts.
+func (s *Store) ListByCwd(ctx context.Context, cwd string) ([]SessionSummary, error) {
 	rows, err := db.New(s.db).ListSessionsByCwd(ctx, cwd)
 	if err != nil {
 		return nil, fmt.Errorf("query sessions: %w", err)
 	}
-	return rows, nil
+
+	summaries := make([]SessionSummary, 0, len(rows))
+	for _, row := range rows {
+		userCount, err := countUserMessages(row.HistoryJson)
+		if err != nil {
+			return nil, fmt.Errorf("count user messages for session %d: %w", row.ID, err)
+		}
+		summaries = append(summaries, SessionSummary{
+			ID:               row.ID,
+			UserMessageCount: userCount,
+		})
+	}
+
+	return summaries, nil
 }

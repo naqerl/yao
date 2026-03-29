@@ -75,7 +75,7 @@ func cmdState(ctx context.Context, s *state.State, args string) error {
 	return nil
 }
 
-// cmdList lists all sessions for the current CWD with message counts.
+// cmdList lists all sessions for the current CWD with user message counts.
 func cmdList(ctx context.Context, s *state.State, args string) error {
 	sessions, err := s.Store.ListByCwd(ctx, s.CWD)
 	if err != nil {
@@ -93,7 +93,7 @@ func cmdList(ctx context.Context, s *state.State, args string) error {
 		if sess.ID == s.SessionID {
 			marker = " (active)"
 		}
-		fmt.Printf("  %d: %d messages%s\n", sess.ID, sess.MessageCount, marker)
+		fmt.Printf("  %d: %d user messages%s\n", sess.ID, sess.UserMessageCount, marker)
 	}
 	return nil
 }

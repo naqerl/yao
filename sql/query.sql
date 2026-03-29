@@ -31,7 +31,7 @@ LIMIT 1;
 -- name: ListSessionsByCwd :many
 SELECT
   id,
-  cast(json_array_length(history_json) as int) AS message_count
+  json(history_json) AS history_json
 FROM session
 WHERE cwd = ?
 ORDER BY id DESC;
@@ -43,3 +43,4 @@ SELECT
   json(history_json) AS history_json
 FROM session
 WHERE cwd = ? AND id = ?;
+

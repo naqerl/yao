@@ -84,15 +84,15 @@ func (q *Queries) GetSessionByID(ctx context.Context, arg GetSessionByIDParams) 
 const listSessionsByCwd = `-- name: ListSessionsByCwd :many
 SELECT
   id,
-  cast(json_array_length(history_json) as int) AS message_count
+  json(history_json) AS history_json
 FROM session
 WHERE cwd = ?
 ORDER BY id DESC
 `
 
 type ListSessionsByCwdRow struct {
-	ID           int64
-	MessageCount int64
+	ID          int64
+	HistoryJson interface{}
 }
 
 func (q *Queries) ListSessionsByCwd(ctx context.Context, cwd string) ([]ListSessionsByCwdRow, error) {
@@ -104,7 +104,7 @@ func (q *Queries) ListSessionsByCwd(ctx context.Context, cwd string) ([]ListSess
 	var items []ListSessionsByCwdRow
 	for rows.Next() {
 		var i ListSessionsByCwdRow
-		if err := rows.Scan(&i.ID, &i.MessageCount); err != nil {
+		if err := rows.Scan(&i.ID, &i.HistoryJson); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
