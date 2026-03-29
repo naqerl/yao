@@ -63,20 +63,39 @@ func main() {
 	cmd.Register(&st)
 	tool.Register(&st)
 
+	// Start goroutine to drain Bus to stdout
+	go func() {
+		for msg := range st.Bus {
+			fmt.Print(msg)
+		}
+	}()
+
 	slog.Info("resumed session", "id", st.SessionID)
-	fmt.Println(st.String())
+	select {
+	case st.Bus <- st.String() + "\n":
+	case <-ctx.Done():
+	}
 
 	// Agent loop
 	for {
 		promptCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 
-		// Read user input
-		fmt.Print("> ")
+		// Print prompt through Bus for proper ordering
+		select {
+		case st.Bus <- "> ":
+		case <-promptCtx.Done():
+			stop()
+			continue
+		}
+
 		prompt, err := readWithContext(promptCtx)
 		if err != nil {
 			stop()
 			if errors.Is(err, context.Canceled) {
-				fmt.Println("[cancelled]")
+				select {
+				case st.Bus <- "[cancelled]\n":
+				case <-ctx.Done():
+				}
 				break
 			}
 			log.Fatalf("could not read from stdin")
@@ -87,7 +106,11 @@ func main() {
 		if cmdName, isCmd := cmd.IsCommand(prompt); isCmd {
 			command, ok := st.Commands[cmdName]
 			if !ok {
-				fmt.Printf("\nunknown command: /%s\n", cmdName)
+				msg := fmt.Sprintf("\nunknown command: /%s\n", cmdName)
+				select {
+				case st.Bus <- msg:
+				case <-promptCtx.Done():
+				}
 			} else if err := command.Execute(promptCtx, &st, prompt); err != nil {
 				slog.Error("command failed", "command", cmdName, "error", err)
 			}
@@ -96,11 +119,17 @@ func main() {
 		}
 
 		// Not a command, proceed with LLM
-		fmt.Println("\n" + kaomoji.GetRandom())
+		select {
+		case st.Bus <- "\n" + kaomoji.GetRandom() + "\n":
+		case <-promptCtx.Done():
+		}
 
 		// Start LLM
 		err = runPrompt(promptCtx, &st, prompt)
-		fmt.Println()
+		select {
+		case st.Bus <- "\n":
+		case <-promptCtx.Done():
+		}
 		stop()
 		if saveErr := st.Store.SaveHistory(ctx, &st); saveErr != nil {
 			slog.Error("save session failed", "error", saveErr, "id", st.SessionID)
@@ -170,7 +199,10 @@ func runPrompt(ctx context.Context, st *state.State, prompt string) error {
 			break
 		}
 
-		fmt.Print(result.Chunk.Text())
+		select {
+		case st.Bus <- result.Chunk.Text():
+		case <-ctx.Done():
+		}
 		acc.Add(result.Chunk)
 	}
 

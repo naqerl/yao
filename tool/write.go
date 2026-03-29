@@ -227,7 +227,7 @@ func performReplace(input writeInput, s *state.State) (string, string, error) {
 			return "", "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
 		}
 		if !strings.Contains(original, input.OldString) {
-			return "", "", fmt.Errorf("old_string not found in %s: the anchor text may have changed from a previous edit; use read tool to see current content and update your old_string", input.Path)
+			return "", "", fmt.Errorf("old_string not found in %s: the file was probably changed, call read tool to see current content and update your old_string", input.Path)
 		}
 		count := strings.Count(original, input.OldString)
 		if count > 1 {
@@ -246,7 +246,7 @@ func performReplace(input writeInput, s *state.State) (string, string, error) {
 			return "", "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
 		}
 		if !strings.Contains(original, input.OldString) {
-			return "", "", fmt.Errorf("old_string not found in %s: the anchor text may have changed from a previous edit; use read tool to see current content and update your old_string", input.Path)
+			return "", "", fmt.Errorf("old_string not found in %s: the file was probably changed, call read tool to see current content and update your old_string", input.Path)
 		}
 		count := strings.Count(original, input.OldString)
 		if !input.ReplaceAll && count > 1 {

@@ -9,7 +9,7 @@ import (
 // Register adds all tools to the state's tools slice.
 func Register(s *state.State) {
 	s.Tools = []ai.ToolRef{
-		DefineBash(s.Genkit),
+		DefineBash(s.Genkit, s),
 		DefineRead(s.Genkit, s),
 		DefineWrite(s.Genkit, s),
 	}
