@@ -49,11 +49,17 @@ type State struct {
 	Store *Store
 	// FileTracker tracks file content to detect external modifications.
 	FileTracker *FileTracker
+	// Bus is a channel for output messages instead of direct stdout writes.
+	// Initialized in Init, drained and closed in Close.
+	Bus chan string
 }
 
 // Init validates and resolves all required fields to work.
 // It is safe to call on a zero-value State, but not on a nil *State.
 func (s *State) Init(ctx context.Context) error {
+	// Initialize output bus (buffered to prevent blocking)
+	s.Bus = make(chan string, 100)
+
 	// System prompt
 	var (
 		systemPrompt string
@@ -142,6 +148,12 @@ func (s *State) String() string {
 }
 
 func (s *State) Close() error {
+	// Close the bus - this signals the consumer to stop.
+	// The consumer goroutine in main.go should be the only reader.
+	if s.Bus != nil {
+		close(s.Bus)
+	}
+
 	if s.Store != nil {
 		return s.Store.Close()
 	}
