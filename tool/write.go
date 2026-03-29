@@ -43,7 +43,7 @@ type writeInput struct {
 	NewString   string `json:"new_string" jsonschema_description:"The new text to insert or replace with"`
 	ReplaceAll  bool   `json:"replace_all,omitempty" jsonschema_description:"Replace all occurrences (default: false, replaces first only)"`
 	InsertAfter bool   `json:"insert_after,omitempty" jsonschema_description:"Insert new_string after old_string instead of replacing. Old_string is kept."`
-	InsertLine  int    `json:"insert_line,omitempty" jsonschema_description:"Insert at this line number (0-indexed). 0 = beginning."`
+	InsertLine  int    `json:"insert_line,omitempty" jsonschema_description:"Insert at this line number (1-indexed). 1 = beginning."`
 	Append      bool   `json:"append,omitempty" jsonschema_description:"Append new_string to end of file"`
 }
 
@@ -53,9 +53,9 @@ func validateOperationMode(input writeInput) error {
 	hasAppend := input.Append
 	hasInsertAfter := input.InsertAfter
 	hasOldString := input.OldString != ""
-	// InsertLine >= 0 with 0 meaning "insert at beginning"
-	// We distinguish "not set" (default 0) from "explicitly 0" by checking if other modes are unset
-	hasInsertLine := input.InsertLine > 0 || (input.InsertLine == 0 && !hasAppend && !hasInsertAfter && !hasOldString)
+	// InsertLine >= 1 with 1 meaning "insert at beginning"
+	// We distinguish "not set" (default 0) from "explicitly 1" by checking if other modes are unset
+	hasInsertLine := input.InsertLine > 1 || (input.InsertLine == 1 && !hasAppend && !hasInsertAfter && !hasOldString)
 
 	modes := 0
 	if hasAppend {
@@ -116,9 +116,10 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 	oldLines := len(strings.Split(original, "\n"))
 
 	switch {
-	case input.InsertLine >= 0 || input.Append:
+	case input.InsertLine >= 1 || input.Append:
 		lines := strings.Split(original, "\n")
-		insertAt := input.InsertLine
+		// Convert 1-indexed InsertLine to 0-indexed insert position
+		insertAt := input.InsertLine - 1
 		if input.Append {
 			insertAt = len(lines)
 		}
@@ -130,19 +131,19 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 			insertAt = len(lines)
 		}
 		newLines := strings.Split(input.NewString, "\n")
-		
+
 		// Ensure proper newline handling when appending to file without trailing newline
 		if input.Append && len(lines) > 0 && len(lines[len(lines)-1]) > 0 {
 			lines[len(lines)-1] += "\n"
 		}
-		
+
 		result := insertLinesAt(lines, insertAt, newLines)
 		newContent = strings.Join(result, "\n")
-		
+
 		if input.Append {
 			msg = fmt.Sprintf("Appended %d lines", len(newLines))
 		} else {
-			msg = fmt.Sprintf("Inserted %d lines at line %d (0-indexed)", len(newLines), insertAt)
+			msg = fmt.Sprintf("Inserted %d lines at line %d", len(newLines), input.InsertLine)
 		}
 
 	case input.InsertAfter:

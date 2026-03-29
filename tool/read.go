@@ -34,7 +34,7 @@ to detect if the file was modified by another process.`,
 
 type readInput struct {
 	Path   string `json:"path" jsonschema_description:"Path to the file to read"`
-	Offset int    `json:"offset,omitempty" jsonschema_description:"Line number to start reading from (0-indexed)."`
+	Offset int    `json:"offset,omitempty" jsonschema_description:"Line number to start reading from (1-indexed). 1 = first line."`
 	Limit  int    `json:"limit,omitempty" jsonschema_description:"Maximum number of lines to read. Omit to read to the end."`
 }
 
@@ -45,8 +45,8 @@ type readOutput struct {
 
 // TODO: Add proper boundary error return
 func performRead(input readInput, s *state.State) (string, error) {
-	if input.Offset < 0 {
-		return "", fmt.Errorf("offset should be >= 0, got %d", input.Offset)
+	if input.Offset < 1 {
+		input.Offset = 1
 	}
 	if input.Limit < 0 {
 		return "", fmt.Errorf("limit should be >= 0, got %d", input.Limit)
@@ -60,12 +60,12 @@ func performRead(input readInput, s *state.State) (string, error) {
 
 	allLines := strings.Split(string(content), "\n")
 
-	fromIdx := input.Offset
+	fromIdx := input.Offset - 1 // convert to 0-indexed for slicing
 	toIdx := len(allLines)
 	if input.Limit > 0 {
-		toIdx = input.Offset + input.Limit
+		toIdx = fromIdx + input.Limit
 		if toIdx > len(allLines) {
-			return "", fmt.Errorf("offset+limit (%d) exceeds file length (%d lines)", toIdx, len(allLines))
+			return "", fmt.Errorf("offset+limit (%d) exceeds file length (%d lines)", input.Offset+input.Limit, len(allLines))
 		}
 	}
 
@@ -74,14 +74,19 @@ func performRead(input readInput, s *state.State) (string, error) {
 	// Build content with line numbers - fixed 6-char width with tab separator (like cat -n)
 	var b strings.Builder
 	for i, line := range lines {
-		b.WriteString(fmt.Sprintf("%6d\t%s\n", fromIdx+i, line))
+		b.WriteString(fmt.Sprintf("%6d\t%s\n", input.Offset+i, line))
 	}
 
 	comment := fmt.Sprintf("→ read %s", input.Path)
 
 	if diff := len(allLines) - len(lines); diff > 0 {
 		b.WriteString(fmt.Sprintf("<system>%d more lines</system>\n", diff))
-		comment += fmt.Sprintf(" (lines %d-%d of %d)", fromIdx, toIdx, len(allLines))
+		// Show 1-indexed line numbers in comment
+		endLine := input.Offset + len(lines) - 1
+		if input.Limit == 0 {
+			endLine = len(allLines)
+		}
+		comment += fmt.Sprintf(" (lines %d-%d of %d)", input.Offset, endLine, len(allLines))
 	}
 
 	s.FileTracker.RecordSnapshot(input.Path, content)
