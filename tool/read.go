@@ -3,7 +3,6 @@ package tool
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/firebase/genkit/go/ai"
@@ -72,11 +71,10 @@ func performRead(input readInput, s *state.State) (string, error) {
 
 	lines := allLines[fromIdx:toIdx]
 
-	// Build content with line numbers
+	// Build content with line numbers - fixed 6-char width with tab separator (like cat -n)
 	var b strings.Builder
-	padTo := len(strconv.Itoa(toIdx))
 	for i, line := range lines {
-		b.WriteString(fmt.Sprintf("%*d | %s\n", padTo, fromIdx+i, line))
+		b.WriteString(fmt.Sprintf("%6d\t%s\n", fromIdx+i, line))
 	}
 
 	comment := fmt.Sprintf("→ read %s", input.Path)
