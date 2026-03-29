@@ -408,6 +408,7 @@ func (g *reasoningModelGenerator) generateStream(ctx context.Context, handleChun
 		}
 		if reasoning != "" {
 			reasoningBuilder += reasoning
+			slog.Debug("received reasoning chunk", "content", reasoning, "accumulated", reasoningBuilder)
 		}
 
 		modelChunk := &ai.ModelResponseChunk{}
@@ -446,6 +447,7 @@ func (g *reasoningModelGenerator) generateStream(ctx context.Context, handleChun
 	}
 
 	if reasoningBuilder != "" && resp.Message != nil && resp.Reasoning() == "" {
+		slog.Debug("attaching accumulated reasoning to response", "total_length", len(reasoningBuilder))
 		resp.Message.Content = append([]*ai.Part{ai.NewReasoningPart(reasoningBuilder, nil)}, resp.Message.Content...)
 	}
 
