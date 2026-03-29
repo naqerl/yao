@@ -409,6 +409,12 @@ func (g *reasoningModelGenerator) generateStream(ctx context.Context, handleChun
 		if reasoning != "" {
 			reasoningBuilder += reasoning
 			slog.Debug("received reasoning chunk", "content", reasoning, "accumulated", reasoningBuilder)
+			// Stream reasoning immediately via callback
+			if err := handleChunk(ctx, &ai.ModelResponseChunk{
+				Content: []*ai.Part{ai.NewReasoningPart(reasoning, nil)},
+			}); err != nil {
+				return nil, fmt.Errorf("callback error: %w", err)
+			}
 		}
 
 		modelChunk := &ai.ModelResponseChunk{}

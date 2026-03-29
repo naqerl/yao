@@ -82,7 +82,7 @@ func main() {
 
 		// Print prompt through Bus for proper ordering
 		select {
-		case st.Bus <- "> ":
+		case st.Bus <- "λ ":
 		case <-promptCtx.Done():
 			stop()
 			continue
@@ -191,6 +191,7 @@ func runPrompt(ctx context.Context, st *state.State, prompt string) error {
 	)
 
 	acc := newStreamMessageAccumulator(len(st.Chat))
+	firstReasoning := true
 
 	for result, err := range stream {
 		if err != nil {
@@ -203,9 +204,27 @@ func runPrompt(ctx context.Context, st *state.State, prompt string) error {
 			break
 		}
 
-		select {
-		case st.Bus <- result.Chunk.Text():
-		case <-ctx.Done():
+		// Process each part in the chunk
+		for _, part := range result.Chunk.Content {
+			if part.IsReasoning() {
+				// Send reasoning with > prefix only on first chunk
+				prefix := ""
+				if firstReasoning {
+					prefix = "\n> "
+					firstReasoning = false
+				}
+				select {
+				case st.Bus <- prefix + part.Text:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			} else if part.IsText() {
+				select {
+				case st.Bus <- part.Text:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
 		}
 		acc.Add(result.Chunk)
 	}
