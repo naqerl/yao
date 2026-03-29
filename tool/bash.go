@@ -14,7 +14,10 @@ import (
 // DefineBash defines the bash tool on the given genkit instance.
 func DefineBash(g *genkit.Genkit) *ai.ToolDef[bashInput, bashOutput] {
 	return genkit.DefineTool(
-		g, "bash", "Execute bash command",
+		g, "bash", `Execute bash command.
+
+Do NOT use '| head' or '| tail' to limit output - the tool handles truncation automatically.
+If output is truncated, the tool will indicate how to read the full output.`,
 		func(ctx *ai.ToolContext, input bashInput) (bashOutput, error) {
 			fmt.Printf("$ %s\n", input.Cmd)
 			out, err := runBash(input)
@@ -26,7 +29,7 @@ func DefineBash(g *genkit.Genkit) *ai.ToolDef[bashInput, bashOutput] {
 }
 
 type bashInput struct {
-	Cmd string `json:"cmd" jsonschema_description:"Bash command to be executed"`
+	Cmd string `json:"cmd" jsonschema_description:"Bash command to execute. Do NOT pipe to head/tail - output will be truncated automatically if needed."`
 }
 
 type bashOutput struct {
