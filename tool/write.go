@@ -31,15 +31,19 @@ For surgical edits (replace mode), use old_string/new_string.
 For full file writes (overwrite mode), use content.
 For adding to end (append mode), use content.`,
 		func(ctx *ai.ToolContext, input writeInput) (writeOutput, error) {
-			msg, stats, err := performWrite(input, s)
+			result, err := performWrite(input, s)
 			var out writeOutput
 			if err != nil {
 				out.Message = err.Error()
-				fmt.Printf("→ write %s (error)\n", input.Path)
+				result = fmt.Sprintf("\n→ write %s (error: %s)", input.Path, err.Error())
 			} else {
 				out.Success = true
-				out.Message = msg
-				fmt.Printf("→ write %s %s\n", input.Path, stats)
+				out.Message = result
+				result = fmt.Sprintf("\n→ write %s: %s", input.Path, result)
+			}
+			select {
+			case s.Bus <- result:
+			case <-ctx.Done():
 			}
 			return out, nil
 		})
@@ -57,7 +61,8 @@ type writeInput struct {
 }
 
 // performWrite executes the write operation based on mode.
-func performWrite(input writeInput, s *state.State) (string, string, error) {
+// Returns a complete message (e.g., "File created (+10)") and any error.
+func performWrite(input writeInput, s *state.State) (string, error) {
 	// Normalize mode - default to "replace" for backward compatibility
 	if input.Mode == "" {
 		input.Mode = "replace"
@@ -71,12 +76,12 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 	case "replace":
 		return performReplace(input, s)
 	default:
-		return "", "", fmt.Errorf("invalid mode: %s (use 'replace', 'overwrite', or 'append')", input.Mode)
+		return "", fmt.Errorf("invalid mode: %s (use 'replace', 'overwrite', or 'append')", input.Mode)
 	}
 }
 
 // performOverwrite writes content as the entire file.
-func performOverwrite(input writeInput, s *state.State) (string, string, error) {
+func performOverwrite(input writeInput, s *state.State) (string, error) {
 	// For overwrite, we don't need to read existing content (except for stats)
 	var oldLines []string
 	fileInfo, err := os.Stat(input.Path)
@@ -94,7 +99,7 @@ func performOverwrite(input writeInput, s *state.State) (string, string, error) 
 		content, _ := os.ReadFile(input.Path)
 		changed, _, _ := s.FileTracker.CheckContent(input.Path, content)
 		if changed {
-			return "", "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
+			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
 		}
 	}
 
@@ -109,7 +114,7 @@ func performOverwrite(input writeInput, s *state.State) (string, string, error) 
 	}
 
 	if err := os.WriteFile(input.Path, []byte(input.Content), mode); err != nil {
-		return "", "", fmt.Errorf("cannot write file: %w", err)
+		return "", fmt.Errorf("cannot write file: %w", err)
 	}
 
 	s.FileTracker.RecordSnapshot(input.Path, []byte(input.Content))
@@ -120,27 +125,27 @@ func performOverwrite(input writeInput, s *state.State) (string, string, error) 
 		removed = 0
 	}
 
-	return msg, formatDiffStats(removed, added), nil
+	return formatMessage(msg, removed, added), nil
 }
 
 // performAppend adds content to the end of the file.
-func performAppend(input writeInput, s *state.State) (string, string, error) {
+func performAppend(input writeInput, s *state.State) (string, error) {
 	content, err := os.ReadFile(input.Path)
 	if err != nil {
-		return "", "", fmt.Errorf("cannot read file: %w", err)
+		return "", fmt.Errorf("cannot read file: %w", err)
 	}
 
 	// Validate against snapshot
 	if s.FileTracker != nil {
 		changed, _, _ := s.FileTracker.CheckContent(input.Path, content)
 		if changed {
-			return "", "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
+			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
 		}
 	}
 
 	fileInfo, err := os.Stat(input.Path)
 	if err != nil {
-		return "", "", fmt.Errorf("cannot stat file: %w", err)
+		return "", fmt.Errorf("cannot stat file: %w", err)
 	}
 
 	appendLines := strings.Split(input.Content, "\n")
@@ -160,42 +165,42 @@ func performAppend(input writeInput, s *state.State) (string, string, error) {
 	}
 
 	if err := os.WriteFile(input.Path, []byte(newContent), fileInfo.Mode()); err != nil {
-		return "", "", fmt.Errorf("cannot write file: %w", err)
+		return "", fmt.Errorf("cannot write file: %w", err)
 	}
 
 	s.FileTracker.RecordSnapshot(input.Path, []byte(newContent))
 
-	return fmt.Sprintf("Appended %d lines", len(appendLines)), formatDiffStats(removed, added), nil
+	return formatMessage(fmt.Sprintf("Appended %d lines", len(appendLines)), removed, added), nil
 }
 
 // performReplace handles old_string/new_string replacement and other legacy modes.
-func performReplace(input writeInput, s *state.State) (string, string, error) {
+func performReplace(input writeInput, s *state.State) (string, error) {
 	// Read current file content
 	content, err := os.ReadFile(input.Path)
 	if err != nil {
-		return "", "", fmt.Errorf("cannot read file: %w", err)
+		return "", fmt.Errorf("cannot read file: %w", err)
 	}
 
 	// Get file info to preserve permissions
 	fileInfo, err := os.Stat(input.Path)
 	if err != nil {
-		return "", "", fmt.Errorf("cannot stat file: %w", err)
+		return "", fmt.Errorf("cannot stat file: %w", err)
 	}
 
 	// Validate against snapshot after reading
 	if s.FileTracker != nil {
 		changed, _, err := s.FileTracker.CheckContent(input.Path, content)
 		if err != nil {
-			return "", "", fmt.Errorf("cannot check file state: %w", err)
+			return "", fmt.Errorf("cannot check file state: %w", err)
 		}
 		if changed {
-			return "", "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
+			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
 		}
 	}
 
 	// Validate exactly one operation mode is specified
 	if err := validateReplaceMode(input); err != nil {
-		return "", "", err
+		return "", err
 	}
 
 	original := string(content)
@@ -224,14 +229,14 @@ func performReplace(input writeInput, s *state.State) (string, string, error) {
 
 	case input.InsertAfter:
 		if input.OldString == "" {
-			return "", "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
+			return "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
 		}
 		if !strings.Contains(original, input.OldString) {
-			return "", "", fmt.Errorf("old_string not found in %s: the file was probably changed, call read tool to see current content and update your old_string", input.Path)
+			return "", fmt.Errorf("old_string not found in %s: the file was probably changed, call read tool to see current content and update your old_string", input.Path)
 		}
 		count := strings.Count(original, input.OldString)
 		if count > 1 {
-			return "", "", fmt.Errorf("old_string appears %d times", count)
+			return "", fmt.Errorf("old_string appears %d times", count)
 		}
 		idx := strings.Index(original, input.OldString)
 		insertPoint := idx + len(input.OldString)
@@ -243,14 +248,14 @@ func performReplace(input writeInput, s *state.State) (string, string, error) {
 	default:
 		// Standard replace mode
 		if input.OldString == "" {
-			return "", "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
+			return "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
 		}
 		if !strings.Contains(original, input.OldString) {
-			return "", "", fmt.Errorf("old_string not found in %s: the file was probably changed, call read tool to see current content and update your old_string", input.Path)
+			return "", fmt.Errorf("old_string not found in %s: the file was probably changed, call read tool to see current content and update your old_string", input.Path)
 		}
 		count := strings.Count(original, input.OldString)
 		if !input.ReplaceAll && count > 1 {
-			return "", "", fmt.Errorf("old_string appears %d times, use replace_all", count)
+			return "", fmt.Errorf("old_string appears %d times, use replace_all", count)
 		}
 		if input.ReplaceAll {
 			newContent = strings.ReplaceAll(original, input.OldString, input.NewString)
@@ -266,17 +271,17 @@ func performReplace(input writeInput, s *state.State) (string, string, error) {
 	}
 
 	if newContent == original {
-		return "", "", fmt.Errorf("no changes")
+		return "", fmt.Errorf("no changes")
 	}
 
 	// Preserve original file permissions
 	if err := os.WriteFile(input.Path, []byte(newContent), fileInfo.Mode()); err != nil {
-		return "", "", fmt.Errorf("cannot write: %w", err)
+		return "", fmt.Errorf("cannot write: %w", err)
 	}
 
 	s.FileTracker.RecordSnapshot(input.Path, []byte(newContent))
 
-	return msg, formatDiffStats(removed, added), nil
+	return formatMessage(msg, removed, added), nil
 }
 
 // validateReplaceMode ensures exactly one replace sub-mode is specified.
@@ -324,16 +329,17 @@ func insertLinesAt(original []string, at int, newLines []string) []string {
 	return result
 }
 
-// formatDiffStats returns a git-style line change summary like "+5/-3" or "+10"
-func formatDiffStats(removed, added int) string {
+// formatMessage returns a complete message with git-style line change summary like "File created (+10)" or "Replaced 1 occurrence (+5/-3)"
+func formatMessage(msg string, removed, added int) string {
+	var stats string
 	if removed == 0 && added == 0 {
-		return "0"
+		stats = "0"
+	} else if removed == 0 {
+		stats = fmt.Sprintf("+%d", added)
+	} else if added == 0 {
+		stats = fmt.Sprintf("-%d", removed)
+	} else {
+		stats = fmt.Sprintf("+%d/-%d", added, removed)
 	}
-	if removed == 0 {
-		return fmt.Sprintf("+%d", added)
-	}
-	if added == 0 {
-		return fmt.Sprintf("-%d", removed)
-	}
-	return fmt.Sprintf("+%d/-%d", added, removed)
+	return fmt.Sprintf("%s (%s)", msg, stats)
 }

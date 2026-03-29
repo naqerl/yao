@@ -106,9 +106,8 @@ func main() {
 		if cmdName, isCmd := cmd.IsCommand(prompt); isCmd {
 			command, ok := st.Commands[cmdName]
 			if !ok {
-				msg := fmt.Sprintf("\nunknown command: /%s\n", cmdName)
 				select {
-				case st.Bus <- msg:
+				case st.Bus <- fmt.Sprintf("\nunknown command: /%s\n", cmdName):
 				case <-promptCtx.Done():
 				}
 			} else if err := command.Execute(promptCtx, &st, prompt); err != nil {
@@ -124,13 +123,18 @@ func main() {
 		case <-promptCtx.Done():
 		}
 
-		// Start LLM
+		// Eval LLM
 		err = runPrompt(promptCtx, &st, prompt)
 		select {
 		case st.Bus <- "\n":
 		case <-promptCtx.Done():
 		}
 		stop()
+
+		// TODO: Nice to have all the history before the error
+		// but currently leads to the existense of toolRequest
+		// w/o corresponding toolResponse. This breaks conversation
+		// and requires manual cleanup
 		if saveErr := st.Store.SaveHistory(ctx, &st); saveErr != nil {
 			slog.Error("save session failed", "error", saveErr, "id", st.SessionID)
 		}
