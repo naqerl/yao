@@ -191,7 +191,7 @@ func runPrompt(ctx context.Context, st *state.State, prompt string) error {
 	)
 
 	acc := newStreamMessageAccumulator(len(st.Chat))
-	firstReasoning := true
+	lastPartKind := ai.PartKind(-1) // -1 represents none/initial state
 
 	for result, err := range stream {
 		if err != nil {
@@ -206,25 +206,46 @@ func runPrompt(ctx context.Context, st *state.State, prompt string) error {
 
 		// Process each part in the chunk
 		for _, part := range result.Chunk.Content {
-			if part.IsReasoning() {
-				// Send reasoning with > prefix only on first chunk
-				prefix := ""
-				if firstReasoning {
+			currentKind := part.Kind
+			content := ""
+			prefix := ""
+
+			switch currentKind {
+			case ai.PartReasoning:
+				// Replace newlines with newline + > prefix for multiline reasoning
+				content = strings.ReplaceAll(part.Text, "\n", "\n> ")
+				// First reasoning block gets > prefix
+				if lastPartKind != ai.PartReasoning {
 					prefix = "\n> "
-					firstReasoning = false
 				}
+			case ai.PartText:
+				content = part.Text
+			case ai.PartToolRequest:
+				// Tool requests don't send content to bus directly
+				content = ""
+			default:
+				continue
+			}
+
+			// Send newline when chunk type changes (except for first chunk)
+			if lastPartKind != -1 && currentKind != lastPartKind {
 				select {
-				case st.Bus <- prefix + part.Text:
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			} else if part.IsText() {
-				select {
-				case st.Bus <- part.Text:
+				case st.Bus <- "\n":
 				case <-ctx.Done():
 					return ctx.Err()
 				}
 			}
+
+			// Send the actual content
+			if content != "" {
+				select {
+				case st.Bus <- prefix + content:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+
+			lastPartKind = currentKind
 		}
 		acc.Add(result.Chunk)
 	}
