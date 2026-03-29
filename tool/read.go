@@ -3,6 +3,7 @@ package tool
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/firebase/genkit/go/ai"
@@ -11,20 +12,22 @@ import (
 	"github.com/naqerl/yao/state"
 )
 
-// DefineReadFile defines the read tool on the given genkit instance.
-func DefineReadFile(g *genkit.Genkit, s *state.State) *ai.ToolDef[readInput, readOutput] {
+// DefineRead defines the read tool on the given genkit instance.
+func DefineRead(g *genkit.Genkit, s *state.State) *ai.ToolDef[readInput, readOutput] {
 	return genkit.DefineTool(
 		g, "read", `Read a file and track its content for safe editing.
 
 Use this tool instead of 'cat' when reading files you plan to edit later.
 The tool records a snapshot of the file content, allowing the edit tool
-to detect if the file was modified by another process.
-
-Use cat only for quick inspection when you don't plan to edit.`,
+to detect if the file was modified by another process.`,
 		func(ctx *ai.ToolContext, input readInput) (readOutput, error) {
-			out, err := performRead(input, s)
+			var out readOutput
+			content, err := performRead(input, s)
 			if err != nil {
-				err = fmt.Errorf("read_file failed: %w", err)
+				out.Message = err.Error()
+			} else {
+				out.Success = true
+				out.Message = content
 			}
 			return out, err
 		})
@@ -32,83 +35,58 @@ Use cat only for quick inspection when you don't plan to edit.`,
 
 type readInput struct {
 	Path   string `json:"path" jsonschema_description:"Path to the file to read"`
-	Offset int    `json:"offset,omitempty" jsonschema_description:"Line number to start reading from (1-indexed). 0 means read all."`
-	Limit  int    `json:"limit,omitempty" jsonschema_description:"Maximum number of lines to read. 0 means read all."`
+	Offset int    `json:"offset,omitempty" jsonschema_description:"Line number to start reading from (0-indexed)."`
+	Limit  int    `json:"limit,omitempty" jsonschema_description:"Maximum number of lines to read. Omit to read to the end."`
 }
 
 type readOutput struct {
-	Content    string `json:"content"`
-	TotalLines int    `json:"total_lines"`
-	StartLine  int    `json:"start_line"`
-	EndLine    int    `json:"end_line"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
 }
 
-func (o readOutput) String() string {
-	var b strings.Builder
-
-	lines := strings.Split(o.Content, "\n")
-	for i, line := range lines {
-		lineNum := o.StartLine + i
-		b.WriteString(fmt.Sprintf("%4d | %s\n", lineNum, line))
+// TODO: Add proper boundary error return
+func performRead(input readInput, s *state.State) (string, error) {
+	if input.Offset < 0 {
+		return "", fmt.Errorf("offset should be >=0, got %d", input.Offset)
+	}
+	if input.Limit < 0 {
+		return "", fmt.Errorf("limit should be >= 0, god %d", input.Limit)
 	}
 
-	if o.TotalLines > o.EndLine {
-		b.WriteString(fmt.Sprintf("... (%d more lines)\n", o.TotalLines-o.EndLine))
-	}
-
-	return b.String()
-}
-
-func performRead(input readInput, s *state.State) (readOutput, error) {
-	var out readOutput
-
-	if input.Path == "" {
-		return out, fmt.Errorf("path is required")
-	}
-
+	// Read fully to build a complete hash in file tracker
 	content, err := os.ReadFile(input.Path)
 	if err != nil {
-		return out, fmt.Errorf("cannot read file: %w", err)
+		return "", fmt.Errorf("cannot read file at %s with %w", input.Path, err)
 	}
 
 	allLines := strings.Split(string(content), "\n")
-	// Handle trailing newline case
-	if len(allLines) > 0 && allLines[len(allLines)-1] == "" {
-		allLines = allLines[:len(allLines)-1]
-	}
-	out.TotalLines = len(allLines)
 
-	// Determine which lines to return
-	startIdx := 0
-	if input.Offset > 0 {
-		startIdx = input.Offset - 1 // Convert to 0-indexed
-	}
-	if startIdx < 0 {
-		startIdx = 0
-	}
-	if startIdx > len(allLines) {
-		startIdx = len(allLines)
+	fromIdx := input.Offset
+	toIdx := input.Offset + input.Limit
+
+	if toIdx > len(allLines) {
+		return "", fmt.Errorf("wrong input offset+limit (%d) > allLines (%d)", toIdx, len(allLines))
 	}
 
-	endIdx := len(allLines)
-	if input.Limit > 0 {
-		endIdx = startIdx + input.Limit
-	}
-	if endIdx > len(allLines) {
-		endIdx = len(allLines)
-	}
+	lines := allLines[fromIdx:toIdx]
 
-	selectedLines := allLines[startIdx:endIdx]
-	out.Content = strings.Join(selectedLines, "\n")
-	out.StartLine = startIdx + 1
-	out.EndLine = endIdx
-
-	// Record snapshot for edit tracking
-	if s.FileTracker != nil {
-		s.FileTracker.RecordSnapshot(input.Path, content)
+	// Build content with line numbers
+	var b strings.Builder
+	padTo := len(strconv.Itoa(toIdx))
+	for i, line := range lines {
+		b.WriteString(fmt.Sprintf("%*d | %s\n", padTo, fromIdx+i, line))
 	}
 
-	fmt.Printf("→ read %s (lines %d-%d of %d)\n", input.Path, out.StartLine, out.EndLine, out.TotalLines)
+	comment := fmt.Sprintf("→ read %s", input.Path)
 
-	return out, nil
+	if diff := len(allLines) - len(lines); diff > 0 {
+		b.WriteString(fmt.Sprintf("<system>%d more lines</system>\n", diff))
+		comment += fmt.Sprintf(" (lines %d-%d of %d)", fromIdx, toIdx, len(allLines))
+	}
+
+	s.FileTracker.RecordSnapshot(input.Path, content)
+
+	fmt.Println(comment)
+
+	return b.String(), nil
 }

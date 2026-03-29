@@ -11,11 +11,17 @@ import (
 	"github.com/naqerl/yao/state"
 )
 
-// DefineEdit defines the edit tool on the given genkit instance.
-func DefineEdit(g *genkit.Genkit, s *state.State) *ai.ToolDef[editInput, editOutput] {
+// writeOutput is the tool's response structure, defined here for clean separation.
+type writeOutput struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// DefineWrite defines the write tool on the given genkit instance.
+func DefineWrite(g *genkit.Genkit, s *state.State) *ai.ToolDef[writeInput, writeOutput] {
 	return genkit.DefineTool(
-		g, "write", "Edit a file by replacing or inserting text.",
-		func(ctx *ai.ToolContext, input editInput) (editOutput, error) {
+		g, "write", "Write a file by replacing or inserting text.",
+		func(ctx *ai.ToolContext, input writeInput) (writeOutput, error) {
 			// Determine operation type for display
 			op := "replace"
 			switch {
@@ -30,70 +36,56 @@ func DefineEdit(g *genkit.Genkit, s *state.State) *ai.ToolDef[editInput, editOut
 			}
 			fmt.Printf("→ write %s [%s]\n", input.Path, op)
 
-			out, err := performEdit(input, s)
+			msg, err := performWrite(input, s)
+			var out writeOutput
 			if err != nil {
-				// Return error to LLM in output, not as tool error
-				out.Success = false
 				out.Message = err.Error()
-				return out, nil
+			} else {
+				out.Success = true
+				out.Message = msg
 			}
+
 			return out, nil
 		})
 }
 
-type editInput struct {
-	Path        string `json:"path" jsonschema_description:"Path to the file to edit"`
+type writeInput struct {
+	Path        string `json:"path" jsonschema_description:"Path to the file to write"`
 	OldString   string `json:"old_string,omitempty" jsonschema_description:"For replace/insert_after: the anchor text. Not needed for insert_line/append."`
 	NewString   string `json:"new_string" jsonschema_description:"The new text to insert or replace with"`
 	ReplaceAll  bool   `json:"replace_all,omitempty" jsonschema_description:"Replace all occurrences (default: false, replaces first only)"`
 	InsertAfter bool   `json:"insert_after,omitempty" jsonschema_description:"Insert new_string after old_string instead of replacing. Old_string is kept."`
-	InsertLine  int    `json:"insert_line,omitempty" jsonschema_description:"Insert at this line number (1-indexed). 1 = beginning, large number = end."`
-	Append      bool   `json:"append,omitempty" jsonschema_description:"Append new_string to end of file (alternative to large insert_line)"`
+	InsertLine  int    `json:"insert_line,omitempty" jsonschema_description:"Insert at this line number (1-indexed). 1 = beginning."`
+	Append      bool   `json:"append,omitempty" jsonschema_description:"Append new_string to end of file"`
 }
 
-type editOutput struct {
-	Success        bool   `json:"success"`
-	Message        string `json:"message"`
-	Diff           string `json:"diff,omitempty"`
-	RequiresReread bool   `json:"requires_reread,omitempty"`
-}
-
-func performEdit(input editInput, s *state.State) (editOutput, error) {
-	var out editOutput
-
-	if input.Path == "" {
-		return out, fmt.Errorf("path is required")
-	}
-	if input.NewString == "" {
-		return out, fmt.Errorf("new_string is required")
-	}
-
+// performWrite executes the write operation and returns a message or error.
+// The calling tool definition constructs the writeOutput for clean separation.
+func performWrite(input writeInput, s *state.State) (string, error) {
 	// Read file first to avoid TOCTOU race condition
 	content, err := os.ReadFile(input.Path)
 	if err != nil {
-		return out, fmt.Errorf("cannot read file: %w", err)
+		return "", fmt.Errorf("cannot read file: %w", err)
 	}
 
 	// Get file info to preserve permissions
 	fileInfo, err := os.Stat(input.Path)
 	if err != nil {
-		return out, fmt.Errorf("cannot stat file: %w", err)
+		return "", fmt.Errorf("cannot stat file: %w", err)
 	}
 
 	// Validate against snapshot after reading (prevents race condition)
 	if s.FileTracker != nil {
-		changed, hasSnapshot, err := s.FileTracker.CheckContent(input.Path, content)
+		changed, _, err := s.FileTracker.CheckContent(input.Path, content)
 		if err != nil {
-			return out, fmt.Errorf("cannot check file state: %w", err)
+			return "", fmt.Errorf("cannot check file state: %w", err)
 		}
 		if changed {
-			out.RequiresReread = true
-			if hasSnapshot {
-				return out, fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
-			}
+			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
 		}
 	}
 
+	// Ensure that modes are not mixed
 	modes := 0
 	if input.InsertLine > 0 {
 		modes++
@@ -108,12 +100,11 @@ func performEdit(input editInput, s *state.State) (editOutput, error) {
 		modes++
 	}
 	if modes > 1 {
-		return out, fmt.Errorf("only one operation mode allowed")
+		return "", fmt.Errorf("only one operation mode allowed")
 	}
 
 	original := string(content)
-	var newContent string
-	var msg string
+	var newContent, msg string
 
 	switch {
 	case input.InsertLine > 0 || input.Append:
@@ -146,14 +137,14 @@ func performEdit(input editInput, s *state.State) (editOutput, error) {
 
 	case input.InsertAfter:
 		if input.OldString == "" {
-			return out, fmt.Errorf("old_string required")
+			return "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
 		}
 		if !strings.Contains(original, input.OldString) {
-			return out, fmt.Errorf("old_string not found")
+			return "", fmt.Errorf("old_string not found in %s: the anchor text may have changed from a previous edit; use read tool to see current content and update your old_string", input.Path)
 		}
 		count := strings.Count(original, input.OldString)
 		if count > 1 {
-			return out, fmt.Errorf("old_string appears %d times", count)
+			return "", fmt.Errorf("old_string appears %d times", count)
 		}
 		idx := strings.Index(original, input.OldString)
 		insertPoint := idx + len(input.OldString)
@@ -162,14 +153,14 @@ func performEdit(input editInput, s *state.State) (editOutput, error) {
 
 	default:
 		if input.OldString == "" {
-			return out, fmt.Errorf("old_string required")
+			return "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
 		}
 		if !strings.Contains(original, input.OldString) {
-			return out, fmt.Errorf("old_string not found")
+			return "", fmt.Errorf("old_string not found in %s: the anchor text may have changed from a previous edit; use read tool to see current content and update your old_string", input.Path)
 		}
 		count := strings.Count(original, input.OldString)
 		if !input.ReplaceAll && count > 1 {
-			return out, fmt.Errorf("old_string appears %d times, use replace_all", count)
+			return "", fmt.Errorf("old_string appears %d times, use replace_all", count)
 		}
 		if input.ReplaceAll {
 			newContent = strings.ReplaceAll(original, input.OldString, input.NewString)
@@ -181,48 +172,15 @@ func performEdit(input editInput, s *state.State) (editOutput, error) {
 	}
 
 	if newContent == original {
-		return out, fmt.Errorf("no changes")
+		return "", fmt.Errorf("no changes")
 	}
 
 	// Preserve original file permissions
 	if err := os.WriteFile(input.Path, []byte(newContent), fileInfo.Mode()); err != nil {
-		return out, fmt.Errorf("cannot write: %w", err)
+		return "", fmt.Errorf("cannot write: %w", err)
 	}
 
-	if s.FileTracker != nil {
-		s.FileTracker.RecordSnapshot(input.Path, []byte(newContent))
-	}
+	s.FileTracker.RecordSnapshot(input.Path, []byte(newContent))
 
-	out.Success = true
-	out.Message = msg
-	out.Diff = generateDiff(original, newContent)
-	return out, nil
-}
-
-func generateDiff(oldContent, newContent string) string {
-	var b strings.Builder
-	oldLines := strings.Split(oldContent, "\n")
-	newLines := strings.Split(newContent, "\n")
-	maxLines := len(oldLines)
-	if len(newLines) > maxLines {
-		maxLines = len(newLines)
-	}
-	changed := 0
-	for i := 0; i < maxLines && changed < 20; i++ {
-		oldLine, newLine := "", ""
-		if i < len(oldLines) {
-			oldLine = oldLines[i]
-		}
-		if i < len(newLines) {
-			newLine = newLines[i]
-		}
-		if oldLine != newLine {
-			b.WriteString(fmt.Sprintf("-%s\n+%s\n", oldLine, newLine))
-			changed++
-		}
-	}
-	if changed >= 20 {
-		b.WriteString("...\n")
-	}
-	return b.String()
+	return msg, nil
 }

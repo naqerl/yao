@@ -10,7 +10,7 @@ import (
 func Register(s *state.State) {
 	s.Tools = []ai.ToolRef{
 		DefineBash(s.Genkit),
-		DefineReadFile(s.Genkit, s),
-		DefineEdit(s.Genkit, s),
+		DefineRead(s.Genkit, s),
+		DefineWrite(s.Genkit, s),
 	}
 }
