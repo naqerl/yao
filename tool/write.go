@@ -22,14 +22,14 @@ func DefineWrite(g *genkit.Genkit, s *state.State) *ai.ToolDef[writeInput, write
 	return genkit.DefineTool(
 		g, "write", `Write or edit a file.
 
-Modes:
-- "replace" (default): Replace old_string with new_string. Requires old_string.
-- "overwrite": Write content as the entire file. Replaces all existing content.
-- "append": Add content to the end of the file.
+CRITICAL: You MUST provide the required parameters for your chosen mode.
 
-For surgical edits (replace mode), use old_string/new_string.
-For full file writes (overwrite mode), use content.
-For adding to end (append mode), use content.`,
+Modes and required parameters:
+- "replace" (default): Replace old_string with new_string. REQUIRED: old_string + new_string. Call read tool first to get the exact old_string.
+- "overwrite": Write content as the entire file. REQUIRED: content.
+- "append": Add content to the end of the file. REQUIRED: content.
+
+DO NOT use replace mode without old_string. If you don't have the exact old_string, call read tool first or use overwrite mode.`,
 		func(ctx *ai.ToolContext, input writeInput) (writeOutput, error) {
 			result, err := performWrite(input, s)
 			var out writeOutput
@@ -304,7 +304,7 @@ func validateReplaceMode(input writeInput) error {
 	}
 
 	if modes == 0 {
-		return fmt.Errorf("replace mode requires old_string: you used mode='replace' (the default) but provided an empty old_string. Provide the exact anchor text to replace, or use mode='overwrite' to replace entire file")
+		return fmt.Errorf("write failed: mode='replace' (default) requires old_string parameter with the exact anchor text to replace. To fix: (1) call read tool to get current content, then provide old_string with the exact text to replace, or (2) use mode='overwrite' with content parameter to replace entire file")
 	}
 	if modes > 1 {
 		return fmt.Errorf("multiple modes specified: only one of old_string/replace, insert_line, or insert_after allowed")
