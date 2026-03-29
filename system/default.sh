@@ -15,6 +15,11 @@ git status --short --branch 2>/dev/null || true
 echo '== last 5 commits =='
 git log --oneline -n 5 2>/dev/null || true
 
+echo '== file reading guidelines =='
+echo 'ALWAYS use the read tool instead of cat, head, or tail.'
+echo 'The read tool is the standard way to view files - not just for editing preparation.'
+echo 'It provides line numbers, tracks file state, and is optimized for LLM context.'
+
 echo '== general instructions =='
 cat "$HOME/.agents/AGENTS.md" 2>/dev/null || true
 

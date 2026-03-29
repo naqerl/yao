@@ -14,11 +14,13 @@ import (
 // DefineRead defines the read tool on the given genkit instance.
 func DefineRead(g *genkit.Genkit, s *state.State) *ai.ToolDef[readInput, readOutput] {
 	return genkit.DefineTool(
-		g, "read", `Read a file and track its content for safe editing.
+		g, "read", `Read a file with line numbers.
 
-Use this tool instead of 'cat' when reading files you plan to edit later.
-The tool records a snapshot of the file content, allowing the edit tool
-to detect if the file was modified by another process.`,
+This is the standard tool for viewing file contents. Use it instead of cat, head, or tail.
+The tool displays content with line numbers (1-indexed, like cat -n) and optionally tracks
+file state for conflict detection if you edit the file later.
+
+Use offset and limit parameters to read specific ranges. Omit both to read the entire file.`,
 		func(ctx *ai.ToolContext, input readInput) (readOutput, error) {
 			var out readOutput
 			content, err := performRead(input, s)
