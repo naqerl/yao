@@ -22,27 +22,15 @@ func DefineWrite(g *genkit.Genkit, s *state.State) *ai.ToolDef[writeInput, write
 	return genkit.DefineTool(
 		g, "write", "Write a file by replacing or inserting text.",
 		func(ctx *ai.ToolContext, input writeInput) (writeOutput, error) {
-			// Determine operation type for display
-			op := "replace"
-			switch {
-			case input.InsertLine >= 0:
-				op = fmt.Sprintf("insert@L%d", input.InsertLine)
-			case input.Append:
-				op = "append"
-			case input.InsertAfter:
-				op = "insert-after"
-			case input.ReplaceAll:
-				op = "replace-all"
-			}
-			fmt.Printf("→ write %s [%s]\n", input.Path, op)
-
-			msg, err := performWrite(input, s)
+			msg, stats, err := performWrite(input, s)
 			var out writeOutput
 			if err != nil {
 				out.Message = err.Error()
+				fmt.Printf("→ write %s (error)\n", input.Path)
 			} else {
 				out.Success = true
 				out.Message = msg
+				fmt.Printf("→ write %s %s\n", input.Path, stats)
 			}
 
 			return out, nil
@@ -94,37 +82,38 @@ func validateOperationMode(input writeInput) error {
 
 // performWrite executes the write operation and returns a message or error.
 // The calling tool definition constructs the writeOutput for clean separation.
-func performWrite(input writeInput, s *state.State) (string, error) {
+func performWrite(input writeInput, s *state.State) (string, string, error) {
 	// Read current file content
 	content, err := os.ReadFile(input.Path)
 	if err != nil {
-		return "", fmt.Errorf("cannot read file: %w", err)
+		return "", "", fmt.Errorf("cannot read file: %w", err)
 	}
 
 	// Get file info to preserve permissions
 	fileInfo, err := os.Stat(input.Path)
 	if err != nil {
-		return "", fmt.Errorf("cannot stat file: %w", err)
+		return "", "", fmt.Errorf("cannot stat file: %w", err)
 	}
 
 	// Validate against snapshot after reading (prevents race condition)
 	if s.FileTracker != nil {
 		changed, _, err := s.FileTracker.CheckContent(input.Path, content)
 		if err != nil {
-			return "", fmt.Errorf("cannot check file state: %w", err)
+			return "", "", fmt.Errorf("cannot check file state: %w", err)
 		}
 		if changed {
-			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
+			return "", "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
 		}
 	}
 
 	// Validate exactly one operation mode is specified
 	if err := validateOperationMode(input); err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	original := string(content)
 	var newContent, msg string
+	oldLines := len(strings.Split(original, "\n"))
 
 	switch {
 	case input.InsertLine >= 0 || input.Append:
@@ -158,14 +147,14 @@ func performWrite(input writeInput, s *state.State) (string, error) {
 
 	case input.InsertAfter:
 		if input.OldString == "" {
-			return "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
+			return "", "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
 		}
 		if !strings.Contains(original, input.OldString) {
-			return "", fmt.Errorf("old_string not found in %s: the anchor text may have changed from a previous edit; use read tool to see current content and update your old_string", input.Path)
+			return "", "", fmt.Errorf("old_string not found in %s: the anchor text may have changed from a previous edit; use read tool to see current content and update your old_string", input.Path)
 		}
 		count := strings.Count(original, input.OldString)
 		if count > 1 {
-			return "", fmt.Errorf("old_string appears %d times", count)
+			return "", "", fmt.Errorf("old_string appears %d times", count)
 		}
 		idx := strings.Index(original, input.OldString)
 		insertPoint := idx + len(input.OldString)
@@ -174,14 +163,14 @@ func performWrite(input writeInput, s *state.State) (string, error) {
 
 	default:
 		if input.OldString == "" {
-			return "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
+			return "", "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
 		}
 		if !strings.Contains(original, input.OldString) {
-			return "", fmt.Errorf("old_string not found in %s: the anchor text may have changed from a previous edit; use read tool to see current content and update your old_string", input.Path)
+			return "", "", fmt.Errorf("old_string not found in %s: the anchor text may have changed from a previous edit; use read tool to see current content and update your old_string", input.Path)
 		}
 		count := strings.Count(original, input.OldString)
 		if !input.ReplaceAll && count > 1 {
-			return "", fmt.Errorf("old_string appears %d times, use replace_all", count)
+			return "", "", fmt.Errorf("old_string appears %d times, use replace_all", count)
 		}
 		if input.ReplaceAll {
 			newContent = strings.ReplaceAll(original, input.OldString, input.NewString)
@@ -193,17 +182,20 @@ func performWrite(input writeInput, s *state.State) (string, error) {
 	}
 
 	if newContent == original {
-		return "", fmt.Errorf("no changes")
+		return "", "", fmt.Errorf("no changes")
 	}
 
 	// Preserve original file permissions
 	if err := os.WriteFile(input.Path, []byte(newContent), fileInfo.Mode()); err != nil {
-		return "", fmt.Errorf("cannot write: %w", err)
+		return "", "", fmt.Errorf("cannot write: %w", err)
 	}
 
 	s.FileTracker.RecordSnapshot(input.Path, []byte(newContent))
 
-	return msg, nil
+	newLines := len(strings.Split(newContent, "\n"))
+	stats := formatLineStats(oldLines, newLines)
+
+	return msg, stats, nil
 }
 
 // insertLinesAt inserts newLines at position at in the original slice.
@@ -213,4 +205,16 @@ func insertLinesAt(original []string, at int, newLines []string) []string {
 	result = append(result, newLines...)
 	result = append(result, original[at:]...)
 	return result
+}
+
+// formatLineStats returns a git-style line change summary like "+5/-3" or "+10"
+func formatLineStats(oldCount, newCount int) string {
+	added := newCount - oldCount
+	if added > 0 {
+		return fmt.Sprintf("+%d", added)
+	}
+	if added < 0 {
+		return fmt.Sprintf("%d", added) // negative number already has minus sign
+	}
+	return "0"
 }
