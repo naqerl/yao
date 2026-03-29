@@ -72,7 +72,7 @@ func Register(s *state.State) {
 // cmdState prints the current state.
 func cmdState(ctx context.Context, s *state.State, args string) error {
 	select {
-	case s.Bus <- s.String() + "\n":
+	case s.Bus <- "\n" + s.String() + "\n":
 	case <-ctx.Done():
 	}
 	return nil
@@ -87,14 +87,14 @@ func cmdList(ctx context.Context, s *state.State, args string) error {
 
 	if len(sessions) == 0 {
 		select {
-		case s.Bus <- "No sessions found for current directory.\n":
+		case s.Bus <- "\nNo sessions found for current directory.\n":
 		case <-ctx.Done():
 		}
 		return nil
 	}
 
 	select {
-	case s.Bus <- "Sessions for current directory:\n":
+	case s.Bus <- "\nSessions for current directory:\n":
 	case <-ctx.Done():
 	}
 	for _, sess := range sessions {
@@ -102,7 +102,7 @@ func cmdList(ctx context.Context, s *state.State, args string) error {
 		if sess.ID == s.SessionID {
 			marker = " (active)"
 		}
-		line := fmt.Sprintf("  %d: %d user messages%s\n", sess.ID, sess.UserMessageCount, marker)
+		line := fmt.Sprintf("\n  %d: %d user messages%s\n", sess.ID, sess.UserMessageCount, marker)
 		select {
 		case s.Bus <- line:
 		case <-ctx.Done():
@@ -118,7 +118,7 @@ func cmdNew(ctx context.Context, s *state.State, args string) error {
 	}
 	// Clear chat history for the new session
 	s.Chat = nil
-	msg := fmt.Sprintf("Created and switched to new session: %d\n", s.SessionID)
+	msg := fmt.Sprintf("\nCreated and switched to new session: %d\n", s.SessionID)
 	select {
 	case s.Bus <- msg:
 	case <-ctx.Done():
@@ -146,7 +146,7 @@ func cmdSwitch(ctx context.Context, s *state.State, args string) error {
 		return fmt.Errorf("load session: %w", err)
 	}
 
-	msg := fmt.Sprintf("Switched to session: %d (%d messages)\n", s.SessionID, len(s.Chat))
+	msg := fmt.Sprintf("\nSwitched to session: %d (%d messages)\n", s.SessionID, len(s.Chat))
 	select {
 	case s.Bus <- msg:
 	case <-ctx.Done():
