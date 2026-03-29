@@ -26,9 +26,22 @@ Use offset and limit parameters to read specific ranges. Omit both to read the e
 			content, err := performRead(input, s)
 			if err != nil {
 				out.Message = err.Error()
+				result := fmt.Sprintf("\n→ read %s (error: %s)", input.Path, err.Error())
+				select {
+				case s.Bus <- result:
+				case <-ctx.Done():
+				}
 			} else {
 				out.Success = true
 				out.Message = content
+				result := fmt.Sprintf("\n→ read %s", input.Path)
+				if input.Offset > 0 || input.Limit > 0 {
+					result = fmt.Sprintf("\n→ read %s (offset=%d, limit=%d)", input.Path, input.Offset, input.Limit)
+				}
+				select {
+				case s.Bus <- result:
+				case <-ctx.Done():
+				}
 			}
 			return out, nil
 		})
