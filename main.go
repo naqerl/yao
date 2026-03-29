@@ -212,11 +212,18 @@ func runPrompt(ctx context.Context, st *state.State, prompt string) error {
 
 			switch currentKind {
 			case ai.PartReasoning:
-				// Replace newlines with newline + > prefix for multiline reasoning
-				content = strings.ReplaceAll(part.Text, "\n", "\n> ")
-				// First reasoning block gets > prefix
-				if lastPartKind != ai.PartReasoning {
-					prefix = "\n> "
+				if st.Verbose {
+					// Replace newlines with newline + > prefix for multiline reasoning
+					content = strings.ReplaceAll(part.Text, "\n", "\n> ")
+					// First reasoning block gets > prefix
+					if lastPartKind != ai.PartReasoning {
+						prefix = "\n> "
+					}
+				} else {
+					// Non-verbose mode: just show indicator on first block
+					if lastPartKind != ai.PartReasoning {
+						content = "> thinking"
+					}
 				}
 			case ai.PartText:
 				content = part.Text

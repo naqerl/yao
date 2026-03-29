@@ -66,6 +66,10 @@ func Register(s *state.State) {
 			description: "Create and switch to a new session",
 			execute:     cmdNew,
 		},
+		"verbose": command{
+			description: "Toggle verbose mode for thinking blocks",
+			execute:     cmdVerbose,
+		},
 	}
 }
 
@@ -149,6 +153,30 @@ func cmdSwitch(ctx context.Context, s *state.State, args string) error {
 	msg := fmt.Sprintf("\nSwitched to session: %d (%d messages)\n", s.SessionID, len(s.Chat))
 	select {
 	case s.Bus <- msg:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+// cmdVerbose toggles the verbose mode for thinking blocks.
+func cmdVerbose(ctx context.Context, s *state.State, args string) error {
+	s.Verbose = !s.Verbose
+
+	// Persist to config
+	val := "false"
+	if s.Verbose {
+		val = "true"
+	}
+	if err := s.Store.SetConfig(ctx, "verbose", val); err != nil {
+		return fmt.Errorf("save verbose config: %w", err)
+	}
+
+	status := "off"
+	if s.Verbose {
+		status = "on"
+	}
+	select {
+	case s.Bus <- fmt.Sprintf("\nVerbose mode: %s\n", status):
 	case <-ctx.Done():
 	}
 	return nil
