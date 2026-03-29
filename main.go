@@ -29,11 +29,11 @@ func main() {
 	// Parse CLI flags
 	flag.StringVar(&st.Provider, "provider", "",
 		"provider to initialize")
-	flag.StringVar(&st.Model, "m", "",
+	flag.StringVar(&st.Model, "model", "",
 		"model to use, optionally as provider/model")
-	flag.StringVar(&st.Thinking, "t", "off",
+	flag.StringVar(&st.Thinking, "thinking", "off",
 		"thinking level: off, low, medium, high")
-	flag.StringVar(&st.SystemPath, "s", "",
+	flag.StringVar(&st.SystemPath, "system", "",
 		"path to a system script")
 	flag.Parse()
 
