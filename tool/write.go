@@ -20,7 +20,16 @@ type writeOutput struct {
 // DefineWrite defines the write tool on the given genkit instance.
 func DefineWrite(g *genkit.Genkit, s *state.State) *ai.ToolDef[writeInput, writeOutput] {
 	return genkit.DefineTool(
-		g, "write", "Write a file by replacing or inserting text.",
+		g, "write", `Write or edit a file.
+
+Modes:
+- "replace" (default): Replace old_string with new_string. Requires old_string.
+- "overwrite": Write content as the entire file. Replaces all existing content.
+- "append": Add content to the end of the file.
+
+For surgical edits (replace mode), use old_string/new_string.
+For full file writes (overwrite mode), use content.
+For adding to end (append mode), use content.`,
 		func(ctx *ai.ToolContext, input writeInput) (writeOutput, error) {
 			msg, stats, err := performWrite(input, s)
 			var out writeOutput
@@ -32,57 +41,135 @@ func DefineWrite(g *genkit.Genkit, s *state.State) *ai.ToolDef[writeInput, write
 				out.Message = msg
 				fmt.Printf("→ write %s %s\n", input.Path, stats)
 			}
-
 			return out, nil
 		})
 }
 
 type writeInput struct {
 	Path        string `json:"path" jsonschema_description:"Path to the file to write"`
-	OldString   string `json:"old_string,omitempty" jsonschema_description:"For replace/insert_after: the anchor text. Not needed for insert_line/append."`
-	NewString   string `json:"new_string" jsonschema_description:"The new text to insert or replace with"`
+	Mode        string `json:"mode,omitempty" jsonschema_description:"Operation mode: 'replace' (default), 'overwrite', or 'append'"`
+	Content     string `json:"content,omitempty" jsonschema_description:"For overwrite/append: the full content to write"`
+	OldString   string `json:"old_string,omitempty" jsonschema_description:"For replace mode: the anchor text to replace"`
+	NewString   string `json:"new_string,omitempty" jsonschema_description:"For replace mode: the replacement text"`
 	ReplaceAll  bool   `json:"replace_all,omitempty" jsonschema_description:"Replace all occurrences (default: false, replaces first only)"`
-	InsertAfter bool   `json:"insert_after,omitempty" jsonschema_description:"Insert new_string after old_string instead of replacing. Old_string is kept."`
-	InsertLine  int    `json:"insert_line,omitempty" jsonschema_description:"Insert at this line number (1-indexed). 1 = beginning."`
-	Append      bool   `json:"append,omitempty" jsonschema_description:"Append new_string to end of file"`
+	InsertAfter bool   `json:"insert_after,omitempty" jsonschema_description:"Insert new_string after old_string instead of replacing"`
+	InsertLine  int    `json:"insert_line,omitempty" jsonschema_description:"Insert at this line number (1-indexed). 1 = beginning"`
 }
 
-// validateOperationMode ensures exactly one operation mode is specified.
-// Priority: Append > InsertAfter > InsertLine > Replace
-func validateOperationMode(input writeInput) error {
-	hasAppend := input.Append
-	hasInsertAfter := input.InsertAfter
-	hasOldString := input.OldString != ""
-	// InsertLine >= 1 with 1 meaning "insert at beginning"
-	// We distinguish "not set" (default 0) from "explicitly 1" by checking if other modes are unset
-	hasInsertLine := input.InsertLine > 1 || (input.InsertLine == 1 && !hasAppend && !hasInsertAfter && !hasOldString)
-
-	modes := 0
-	if hasAppend {
-		modes++
-	}
-	if hasInsertAfter {
-		modes++
-	}
-	if hasInsertLine {
-		modes++
-	}
-	if hasOldString && !hasInsertAfter {
-		modes++
-	}
-
-	if modes == 0 {
-		return fmt.Errorf("no operation mode specified: provide old_string, insert_line, append, or insert_after")
-	}
-	if modes > 1 {
-		return fmt.Errorf("multiple operation modes specified: only one of old_string/replace, insert_line, append, or insert_after allowed")
-	}
-	return nil
-}
-
-// performWrite executes the write operation and returns a message or error.
-// The calling tool definition constructs the writeOutput for clean separation.
+// performWrite executes the write operation based on mode.
 func performWrite(input writeInput, s *state.State) (string, string, error) {
+	// Normalize mode - default to "replace" for backward compatibility
+	if input.Mode == "" {
+		input.Mode = "replace"
+	}
+
+	switch input.Mode {
+	case "overwrite":
+		return performOverwrite(input, s)
+	case "append":
+		return performAppend(input, s)
+	case "replace":
+		return performReplace(input, s)
+	default:
+		return "", "", fmt.Errorf("invalid mode: %s (use 'replace', 'overwrite', or 'append')", input.Mode)
+	}
+}
+
+// performOverwrite writes content as the entire file.
+func performOverwrite(input writeInput, s *state.State) (string, string, error) {
+	// For overwrite, we don't need to read existing content (except for stats)
+	var oldLines []string
+	fileInfo, err := os.Stat(input.Path)
+	if err == nil {
+		// File exists, read it for stats
+		content, _ := os.ReadFile(input.Path)
+		oldLines = strings.Split(string(content), "\n")
+	} else {
+		// New file
+		fileInfo = nil
+	}
+
+	// Validate against snapshot if file exists
+	if s.FileTracker != nil && fileInfo != nil {
+		content, _ := os.ReadFile(input.Path)
+		changed, _, _ := s.FileTracker.CheckContent(input.Path, content)
+		if changed {
+			return "", "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
+		}
+	}
+
+	newLines := strings.Split(input.Content, "\n")
+	removed := len(oldLines)
+	added := len(newLines)
+
+	// Determine file mode for new files
+	mode := os.FileMode(0644)
+	if fileInfo != nil {
+		mode = fileInfo.Mode()
+	}
+
+	if err := os.WriteFile(input.Path, []byte(input.Content), mode); err != nil {
+		return "", "", fmt.Errorf("cannot write file: %w", err)
+	}
+
+	s.FileTracker.RecordSnapshot(input.Path, []byte(input.Content))
+
+	msg := "File overwritten"
+	if fileInfo == nil {
+		msg = "File created"
+		removed = 0
+	}
+
+	return msg, formatDiffStats(removed, added), nil
+}
+
+// performAppend adds content to the end of the file.
+func performAppend(input writeInput, s *state.State) (string, string, error) {
+	content, err := os.ReadFile(input.Path)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot read file: %w", err)
+	}
+
+	// Validate against snapshot
+	if s.FileTracker != nil {
+		changed, _, _ := s.FileTracker.CheckContent(input.Path, content)
+		if changed {
+			return "", "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
+		}
+	}
+
+	fileInfo, err := os.Stat(input.Path)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot stat file: %w", err)
+	}
+
+	appendLines := strings.Split(input.Content, "\n")
+
+	// Ensure newline before append if file doesn't end with one
+	separator := ""
+	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+		separator = "\n"
+	}
+
+	newContent := string(content) + separator + input.Content
+
+	removed := 0
+	added := len(appendLines)
+	if separator != "" {
+		added++ // Count the separator newline
+	}
+
+	if err := os.WriteFile(input.Path, []byte(newContent), fileInfo.Mode()); err != nil {
+		return "", "", fmt.Errorf("cannot write file: %w", err)
+	}
+
+	s.FileTracker.RecordSnapshot(input.Path, []byte(newContent))
+
+	return fmt.Sprintf("Appended %d lines", len(appendLines)), formatDiffStats(removed, added), nil
+}
+
+// performReplace handles old_string/new_string replacement and other legacy modes.
+func performReplace(input writeInput, s *state.State) (string, string, error) {
 	// Read current file content
 	content, err := os.ReadFile(input.Path)
 	if err != nil {
@@ -95,7 +182,7 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 		return "", "", fmt.Errorf("cannot stat file: %w", err)
 	}
 
-	// Validate against snapshot after reading (prevents race condition)
+	// Validate against snapshot after reading
 	if s.FileTracker != nil {
 		changed, _, err := s.FileTracker.CheckContent(input.Path, content)
 		if err != nil {
@@ -107,7 +194,7 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 	}
 
 	// Validate exactly one operation mode is specified
-	if err := validateOperationMode(input); err != nil {
+	if err := validateReplaceMode(input); err != nil {
 		return "", "", err
 	}
 
@@ -117,39 +204,23 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 	removed, added := 0, 0
 
 	switch {
-	case input.InsertLine >= 1 || input.Append:
+	case input.InsertLine >= 1:
 		// Convert 1-indexed InsertLine to 0-indexed insert position
 		insertAt := input.InsertLine - 1
-		if input.Append {
-			insertAt = len(oldLines)
-		}
-		// Clamp to valid range
 		if insertAt < 0 {
 			insertAt = 0
 		}
 		if insertAt > len(oldLines) {
 			insertAt = len(oldLines)
 		}
-		newLines := strings.Split(input.NewString, "\n")
+		newLinesList := strings.Split(input.NewString, "\n")
 
-		// Ensure proper newline handling when appending to file without trailing newline
-		lines := oldLines
-		if input.Append && len(lines) > 0 && len(lines[len(lines)-1]) > 0 {
-			lines[len(lines)-1] += "\n"
-		}
-
-		result := insertLinesAt(lines, insertAt, newLines)
+		result := insertLinesAt(oldLines, insertAt, newLinesList)
 		newContent = strings.Join(result, "\n")
 
-		added = len(newLines)
-		// For insertion, nothing is removed (we're adding between existing lines)
+		added = len(newLinesList)
 		removed = 0
-
-		if input.Append {
-			msg = fmt.Sprintf("Appended %d lines", len(newLines))
-		} else {
-			msg = fmt.Sprintf("Inserted %d lines at line %d", len(newLines), input.InsertLine)
-		}
+		msg = fmt.Sprintf("Inserted %d lines at line %d", len(newLinesList), input.InsertLine)
 
 	case input.InsertAfter:
 		if input.OldString == "" {
@@ -166,11 +237,11 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 		insertPoint := idx + len(input.OldString)
 		newContent = original[:insertPoint] + input.NewString + original[insertPoint:]
 		msg = "Inserted after anchor"
-		// For insert_after, we add new lines but don't remove anything
 		added = len(strings.Split(input.NewString, "\n"))
 		removed = 0
 
 	default:
+		// Standard replace mode
 		if input.OldString == "" {
 			return "", "", fmt.Errorf("old_string is empty: provide the exact anchor text from the file")
 		}
@@ -184,7 +255,6 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 		if input.ReplaceAll {
 			newContent = strings.ReplaceAll(original, input.OldString, input.NewString)
 			msg = fmt.Sprintf("Replaced %d occurrences", count)
-			// For replace_all, count all occurrences
 			added = len(strings.Split(input.NewString, "\n")) * count
 			removed = len(strings.Split(input.OldString, "\n")) * count
 		} else {
@@ -206,9 +276,43 @@ func performWrite(input writeInput, s *state.State) (string, string, error) {
 
 	s.FileTracker.RecordSnapshot(input.Path, []byte(newContent))
 
-	stats := formatDiffStats(removed, added)
+	return msg, formatDiffStats(removed, added), nil
+}
 
-	return msg, stats, nil
+// validateReplaceMode ensures exactly one replace sub-mode is specified.
+func validateReplaceMode(input writeInput) error {
+	hasInsertAfter := input.InsertAfter
+	hasOldString := input.OldString != ""
+	hasInsertLine := input.InsertLine >= 1
+	hasNewString := input.NewString != ""
+
+	// Count modes
+	modes := 0
+	if hasInsertLine {
+		modes++
+	}
+	if hasInsertAfter {
+		modes++
+	}
+	if hasOldString && !hasInsertAfter {
+		modes++
+	}
+
+	if modes == 0 {
+		return fmt.Errorf("no replace mode specified: provide old_string, insert_line, or insert_after")
+	}
+	if modes > 1 {
+		return fmt.Errorf("multiple modes specified: only one of old_string/replace, insert_line, or insert_after allowed")
+	}
+
+	// Validate new_string is provided when needed
+	if hasInsertLine || hasInsertAfter || (hasOldString && !hasInsertAfter) {
+		if !hasNewString {
+			return fmt.Errorf("new_string is required for the specified operation")
+		}
+	}
+
+	return nil
 }
 
 // insertLinesAt inserts newLines at position at in the original slice.
@@ -221,7 +325,6 @@ func insertLinesAt(original []string, at int, newLines []string) []string {
 }
 
 // formatDiffStats returns a git-style line change summary like "+5/-3" or "+10"
-// Shows actual lines added and removed (not just net change)
 func formatDiffStats(removed, added int) string {
 	if removed == 0 && added == 0 {
 		return "0"
