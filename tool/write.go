@@ -99,7 +99,7 @@ func performOverwrite(input writeInput, s *state.State) (string, error) {
 		content, _ := os.ReadFile(input.Path)
 		changed, _, _ := s.FileTracker.CheckContent(input.Path, content)
 		if changed {
-			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
+			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use read tool on %s to see current content", input.Path)
 		}
 	}
 
@@ -139,7 +139,7 @@ func performAppend(input writeInput, s *state.State) (string, error) {
 	if s.FileTracker != nil {
 		changed, _, _ := s.FileTracker.CheckContent(input.Path, content)
 		if changed {
-			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
+			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use read tool on %s to see current content", input.Path)
 		}
 	}
 
@@ -194,7 +194,7 @@ func performReplace(input writeInput, s *state.State) (string, error) {
 			return "", fmt.Errorf("cannot check file state: %w", err)
 		}
 		if changed {
-			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use cat -n %s to see current content", input.Path)
+			return "", fmt.Errorf("FILE CHANGED: file modified after last read, use read tool on %s to see current content", input.Path)
 		}
 	}
 
