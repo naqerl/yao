@@ -304,7 +304,7 @@ func validateReplaceMode(input writeInput) error {
 	}
 
 	if modes == 0 {
-		return fmt.Errorf("no replace mode specified: provide old_string, insert_line, or insert_after")
+		return fmt.Errorf("replace mode requires old_string: you used mode='replace' (the default) but provided an empty old_string. Provide the exact anchor text to replace, or use mode='overwrite' to replace entire file")
 	}
 	if modes > 1 {
 		return fmt.Errorf("multiple modes specified: only one of old_string/replace, insert_line, or insert_after allowed")
