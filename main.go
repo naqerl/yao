@@ -231,16 +231,12 @@ func runPrompt(ctx context.Context, st *state.State, prompt string) error {
 				// Tool requests don't send content to bus directly
 				content = ""
 			default:
+				slog.Debug("unexpected part kind", "part", currentKind)
 				continue
 			}
 
-			// Send newline when chunk type changes (except for first chunk)
-			if lastPartKind != -1 && currentKind != lastPartKind {
-				select {
-				case st.Bus <- "\n":
-				case <-ctx.Done():
-					return ctx.Err()
-				}
+			if lastPartKind != -1 && currentKind != lastPartKind && !strings.HasSuffix(content, "\n") {
+				prefix = "\n" + prefix
 			}
 
 			// Send the actual content
