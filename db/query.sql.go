@@ -30,6 +30,17 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const getConfig = `-- name: GetConfig :one
+SELECT value FROM config WHERE key = ?
+`
+
+func (q *Queries) GetConfig(ctx context.Context, key string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getConfig, key)
+	var value string
+	err := row.Scan(&value)
+	return value, err
+}
+
 const getLatestSessionByCwd = `-- name: GetLatestSessionByCwd :one
 SELECT
   id,
@@ -138,5 +149,20 @@ type SaveSessionHistoryParams struct {
 
 func (q *Queries) SaveSessionHistory(ctx context.Context, arg SaveSessionHistoryParams) error {
 	_, err := q.db.ExecContext(ctx, saveSessionHistory, arg.ID, arg.Cwd, arg.Jsonb)
+	return err
+}
+
+const setConfig = `-- name: SetConfig :exec
+INSERT INTO config (key, value) VALUES (?, ?)
+ON CONFLICT (key) DO UPDATE SET value = excluded.value
+`
+
+type SetConfigParams struct {
+	Key   string
+	Value string
+}
+
+func (q *Queries) SetConfig(ctx context.Context, arg SetConfigParams) error {
+	_, err := q.db.ExecContext(ctx, setConfig, arg.Key, arg.Value)
 	return err
 }

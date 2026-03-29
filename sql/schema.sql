@@ -4,3 +4,8 @@ CREATE TABLE IF NOT EXISTS session (
   history_json BLOB NOT NULL CHECK (json_valid(history_json, 8)),
   PRIMARY KEY (cwd, id)
 );
+
+CREATE TABLE IF NOT EXISTS config (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);

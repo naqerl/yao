@@ -4,6 +4,11 @@
 
 package db
 
+type Config struct {
+	Key   string
+	Value string
+}
+
 type Session struct {
 	ID          int64
 	Cwd         string
