@@ -377,6 +377,10 @@ func (g *reasoningModelGenerator) Generate(ctx context.Context, req *ai.ModelReq
 		g.request.ResponseFormat = getResponseFormat(req.Output)
 	}
 
+	// Debug: log the actual request being sent
+	reqJSON, _ := json.Marshal(g.request)
+	slog.Debug("sending request to API", "request", string(reqJSON))
+
 	if handleChunk != nil {
 		return g.generateStream(ctx, handleChunk)
 	}

@@ -104,7 +104,11 @@ func (s *State) Init(ctx context.Context) error {
 	switch s.Thinking {
 	case "", "off":
 		s.Thinking = "off"
-		s.GenerateConfig = nil
+		s.GenerateConfig = map[string]any{
+			"thinking": map[string]any{
+				"type": "off",
+			},
+		}
 	case "low":
 		s.GenerateConfig = thinkingConfig(s.Thinking, 1024)
 	case "medium":
